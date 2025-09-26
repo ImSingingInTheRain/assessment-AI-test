@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 from typing import Any, Dict, List, Optional
 
@@ -35,6 +37,40 @@ def get_schema() -> Dict[str, Any]:
         schema = load_schema() or {"questions": []}
         st.session_state[SCHEMA_STATE_KEY] = schema
     return st.session_state[SCHEMA_STATE_KEY]
+
+
+def verify_password(password: str) -> bool:
+    """Validate a plaintext password against the configured hash."""
+
+    stored_hash = st.secrets.get("editor_password_hash", "")
+    if not stored_hash:
+        return False
+
+    digest = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    return hmac.compare_digest(digest, stored_hash)
+
+
+def require_authentication() -> None:
+    """Enforce a minimal password gate for the editor."""
+
+    if st.session_state.get("auth"):
+        return
+
+    stored_hash = st.secrets.get("editor_password_hash", "")
+    if not stored_hash:
+        st.error("Editor password is not configured.")
+        st.stop()
+
+    password = st.text_input("Password", type="password")
+    if not password:
+        st.stop()
+
+    if verify_password(password):
+        st.session_state.auth = True
+        return
+
+    st.error("Incorrect password.")
+    st.stop()
 
 
 def parse_options(raw: str) -> List[str]:
@@ -180,6 +216,8 @@ def render_add_question(schema: Dict[str, Any]) -> None:
 
 def main() -> None:
     """Render the questionnaire editor page."""
+
+    require_authentication()
 
     st.title("Questionnaire editor")
     st.caption("Authentication is assumed to have already succeeded.")
