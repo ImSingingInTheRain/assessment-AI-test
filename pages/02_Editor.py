@@ -5,28 +5,52 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
 
 from Home import load_schema
-from lib.github_backend import GitHubBackend
+from lib.github_backend import GitHubBackend, create_branch, ensure_pr, put_file
 
 SCHEMA_STATE_KEY = "editor_schema"
+DRAFT_BRANCH_STATE_KEY = "editor_draft_branch"
 QUESTION_TYPES = ["single", "multiselect", "bool", "text"]
 
 
-def get_backend() -> Optional[GitHubBackend]:
-    """Instantiate a GitHub backend using Streamlit secrets if available."""
+def get_github_config() -> Optional[Dict[str, Any]]:
+    """Return GitHub configuration from Streamlit secrets if available."""
 
     secrets = st.secrets.get("github", {})  # type: ignore[arg-type]
     token = secrets.get("token")
     repo = secrets.get("repo")
     path = secrets.get("path", "form_schema.json")
     branch = secrets.get("branch", "main")
+    api_url = secrets.get("api_url", "https://api.github.com")
 
     if token and repo and path:
-        return GitHubBackend(token=token, repo=repo, path=path, branch=branch)
+        return {
+            "token": token,
+            "repo": repo,
+            "path": path,
+            "branch": branch,
+            "api_url": api_url,
+        }
+    return None
+
+
+def get_backend() -> Optional[GitHubBackend]:
+    """Instantiate a GitHub backend using Streamlit secrets if available."""
+
+    config = get_github_config()
+    if config is not None:
+        return GitHubBackend(
+            token=config["token"],
+            repo=config["repo"],
+            path=config["path"],
+            branch=config.get("branch", "main"),
+            api_url=config.get("api_url", "https://api.github.com"),
+        )
     return None
 
 
@@ -91,24 +115,143 @@ def parse_show_if(raw: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def persist_schema(schema: Dict[str, Any], message: str) -> None:
-    """Persist the schema using the GitHub backend or locally as a fallback."""
+def validate_schema(schema: Dict[str, Any]) -> List[str]:
+    """Run simple validation checks on the questionnaire schema."""
 
-    backend = get_backend()
-    if backend is not None:
-        try:
-            backend.write_json(schema, message)
-            st.success("Schema saved to GitHub.")
-        except Exception as exc:  # pylint: disable=broad-except
-            st.error(f"Failed to save schema to GitHub: {exc}")
-            return
-    else:
-        with open("form_schema.json", "w", encoding="utf-8") as schema_file:
-            json.dump(schema, schema_file, indent=2)
-        st.info("Schema saved locally. Configure GitHub secrets to enable remote persistence.")
+    errors: List[str] = []
+    questions = schema.get("questions", [])
+
+    seen_keys = set()
+    for question in questions:
+        key = question.get("key")
+        if not key:
+            errors.append("All questions must define a key.")
+            continue
+        if key in seen_keys:
+            errors.append(f"Duplicate question key detected: {key}")
+        seen_keys.add(key)
+
+    def iter_rule_fields(rule: Any) -> List[str]:
+        fields: List[str] = []
+        if isinstance(rule, dict):
+            field_value = rule.get("field")
+            if isinstance(field_value, str):
+                fields.append(field_value)
+            for value in rule.values():
+                if isinstance(value, dict):
+                    fields.extend(iter_rule_fields(value))
+                elif isinstance(value, list):
+                    for item in value:
+                        fields.extend(iter_rule_fields(item))
+        elif isinstance(rule, list):
+            for item in rule:
+                fields.extend(iter_rule_fields(item))
+        return fields
+
+    for question in questions:
+        show_if = question.get("show_if")
+        if not show_if:
+            continue
+        for field in iter_rule_fields(show_if):
+            if field not in seen_keys:
+                errors.append(
+                    f"Question '{question.get('key', '<unknown>')}' references unknown field '{field}' in show_if rules."
+                )
+
+    return errors
+
+
+def handle_save_draft(schema: Dict[str, Any]) -> None:
+    """Save the current schema to a draft branch and ensure a PR exists."""
+
+    errors = validate_schema(schema)
+    if errors:
+        for error in errors:
+            st.error(error)
+        return
+
+    config = get_github_config()
+    if config is None:
+        st.error("GitHub configuration is required to save drafts.")
+        return
+
+    branch = st.session_state.get(DRAFT_BRANCH_STATE_KEY)
+    if not branch:
+        branch = f"draft/form-editor-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+        st.session_state[DRAFT_BRANCH_STATE_KEY] = branch
+
+    try:
+        create_branch(config, branch)
+        backend = GitHubBackend(
+            token=config["token"],
+            repo=config["repo"],
+            path=config["path"],
+            branch=branch,
+            api_url=config.get("api_url", "https://api.github.com"),
+        )
+        sha = backend.get_file_sha()
+        put_file(
+            config,
+            schema,
+            sha,
+            message=f"chore: save questionnaire draft ({branch})",
+            branch=branch,
+        )
+        pr = ensure_pr(
+            config,
+            branch,
+            title="Draft: Update questionnaire schema",
+            body="Automated draft update from the questionnaire editor.",
+        )
+    except Exception as exc:  # pylint: disable=broad-except
+        st.error(f"Failed to save draft: {exc}")
+        return
+
+    st.success(f"Draft saved to branch {branch}.")
+    pr_url = pr.get("html_url")
+    if pr_url:
+        st.markdown(f"[View pull request]({pr_url})")
+
+
+def handle_publish(schema: Dict[str, Any]) -> None:
+    """Publish the schema to the main branch or save locally if unavailable."""
+
+    errors = validate_schema(schema)
+    if errors:
+        for error in errors:
+            st.error(error)
+        return
+
+    config = get_github_config()
+    try:
+        if config is not None:
+            backend = GitHubBackend(
+                token=config["token"],
+                repo=config["repo"],
+                path=config["path"],
+                branch=config.get("branch", "main"),
+                api_url=config.get("api_url", "https://api.github.com"),
+            )
+            sha = backend.get_file_sha()
+            put_file(
+                config,
+                schema,
+                sha,
+                message="chore: publish questionnaire schema",
+                branch=config.get("branch", "main"),
+            )
+            st.success("Schema published to the main branch.")
+        else:
+            with open("form_schema.json", "w", encoding="utf-8") as schema_file:
+                json.dump(schema, schema_file, indent=2)
+            st.info("GitHub is not configured; schema saved locally instead.")
+    except Exception as exc:  # pylint: disable=broad-except
+        st.error(f"Failed to publish schema: {exc}")
+        return
 
     load_schema.clear()
     st.session_state[SCHEMA_STATE_KEY] = schema
+    st.session_state.pop(DRAFT_BRANCH_STATE_KEY, None)
 
 
 def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> None:
@@ -166,13 +309,15 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
                     schema["questions"][idx] = updated_question
                     break
 
-            persist_schema(schema, message=f"Update question {question['key']}")
+            st.session_state[SCHEMA_STATE_KEY] = schema
+            st.success("Question updated. Use Publish or Save as Draft to persist changes.")
 
         if delete_requested:
             schema["questions"] = [
                 q for q in schema.get("questions", []) if q.get("key") != question.get("key")
             ]
-            persist_schema(schema, message=f"Remove question {question['key']}")
+            st.session_state[SCHEMA_STATE_KEY] = schema
+            st.warning("Question removed. Use Publish or Save as Draft to persist changes.")
 
 
 def render_add_question(schema: Dict[str, Any]) -> None:
@@ -211,7 +356,8 @@ def render_add_question(schema: Dict[str, Any]) -> None:
                 new_question["show_if"] = show_if
 
             schema.setdefault("questions", []).append(new_question)
-            persist_schema(schema, message=f"Add question {key}")
+            st.session_state[SCHEMA_STATE_KEY] = schema
+            st.success("Question added. Use Publish or Save as Draft to persist changes.")
 
 
 def main() -> None:
@@ -238,6 +384,16 @@ def main() -> None:
 
     with st.expander("View raw schema"):
         st.json(schema)
+
+    st.divider()
+    st.subheader("Save changes")
+    col_draft, col_publish = st.columns(2)
+    with col_draft:
+        if st.button("Save as Draft"):
+            handle_save_draft(schema)
+    with col_publish:
+        if st.button("Publish", type="primary"):
+            handle_publish(schema)
 
 
 if __name__ == "__main__":
