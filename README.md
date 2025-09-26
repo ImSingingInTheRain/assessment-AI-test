@@ -17,3 +17,9 @@ A simple Streamlit app template for you to modify!
    ```
    $ streamlit run streamlit_app.py
    ```
+
+### Editor login
+
+The editor page is protected by a lightweight password gate. For local development
+the default credentials are configured in `.streamlit/secrets.toml` and the
+password is `admin`.
