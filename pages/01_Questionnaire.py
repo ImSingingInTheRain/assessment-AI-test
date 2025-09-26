@@ -52,22 +52,24 @@ def load_schema_from_github() -> Dict[str, Any]:
     contents = get_file(config)
     return json.loads(contents)
 
-ANSWERS_STATE_KEY = "questionnaire_answers"
+ANSWERS_STATE_KEY = "answers"
 
 
-def evaluate_condition(condition: Dict[str, Any], answers: Dict[str, Any]) -> bool:
-    """Evaluate a single condition or a group of conditions."""
+def eval_clause(clause: Dict[str, Any], answers: Dict[str, Any]) -> bool:
+    """Evaluate a single rule clause against the current answers."""
 
-    if "all" in condition:
-        return all(evaluate_condition(item, answers) for item in condition["all"])
-    if "any" in condition:
-        return any(evaluate_condition(item, answers) for item in condition["any"])
+    operator = clause.get("operator", "equals")
+    field = clause.get("field")
+    expected = clause.get("value")
 
-    operator = condition.get("operator")
-    field = condition.get("field")
-    expected = condition.get("value")
+    if field is None and operator != "always":
+        st.warning("Rule clause missing 'field'.")
+        return False
+
     value = answers.get(field)
 
+    if operator == "always":
+        return True
     if operator == "equals":
         return value == expected
     if operator == "not_equals":
@@ -98,9 +100,23 @@ def evaluate_condition(condition: Dict[str, Any], answers: Dict[str, Any]) -> bo
         return all(item in value for item in expected)
     if operator == "is_true":
         return bool(value) is True
+    if operator == "is_false":
+        return bool(value) is False
 
     st.warning(f"Unsupported operator: {operator}")
     return False
+
+
+def eval_rule(rule: Dict[str, Any], answers: Dict[str, Any]) -> bool:
+    """Evaluate a rule made of clauses and logical operators."""
+
+    if not rule:
+        return True
+    if "all" in rule:
+        return all(eval_rule(subrule, answers) for subrule in rule.get("all", []))
+    if "any" in rule:
+        return any(eval_rule(subrule, answers) for subrule in rule.get("any", []))
+    return eval_clause(rule, answers)
 
 
 def should_show_question(question: Dict[str, Any], answers: Dict[str, Any]) -> bool:
@@ -109,7 +125,7 @@ def should_show_question(question: Dict[str, Any], answers: Dict[str, Any]) -> b
     show_if = question.get("show_if")
     if not show_if:
         return True
-    return evaluate_condition(show_if, answers)
+    return eval_rule(show_if, answers)
 
 
 def render_question(question: Dict[str, Any], answers: Dict[str, Any]) -> None:
@@ -136,12 +152,11 @@ def render_question(question: Dict[str, Any], answers: Dict[str, Any]) -> None:
             return
         if default_value not in options:
             default_value = options[0]
-        index = options.index(default_value)
-        selection = st.selectbox(
+        index = options.index(default_value) if default_value in options else 0
+        selection = st.radio(
             label,
-            options=options,
+            options,
             index=index,
-            placeholder=question.get("placeholder"),
             key=widget_key,
             help=help_text,
         )
@@ -160,9 +175,9 @@ def render_question(question: Dict[str, Any], answers: Dict[str, Any]) -> None:
         answers[question_key] = selections
     elif question_type == "bool":
         default_bool = bool(default_value) if default_value is not None else False
-        selection = st.toggle(
+        selection = st.checkbox(
             label,
-            value=st.session_state.get(widget_key, default_bool),
+            value=default_bool,
             key=widget_key,
             help=help_text,
         )
@@ -171,7 +186,7 @@ def render_question(question: Dict[str, Any], answers: Dict[str, Any]) -> None:
         default_text = "" if default_value is None else str(default_value)
         text_value = st.text_input(
             label,
-            value=st.session_state.get(widget_key, default_text),
+            value=default_text,
             key=widget_key,
             placeholder=question.get("placeholder"),
             help=help_text,
@@ -231,6 +246,9 @@ def main() -> None:
         render_question(question, answers)
 
     st.session_state[ANSWERS_STATE_KEY] = answers
+
+    st.subheader("Debug: current answers")
+    st.json(st.session_state[ANSWERS_STATE_KEY])
 
     if st.button("Submit questionnaire"):
         st.success("Responses captured. Persistence will be wired via GitHub.")
