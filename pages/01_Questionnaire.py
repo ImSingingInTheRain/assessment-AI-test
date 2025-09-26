@@ -22,6 +22,35 @@ class GHConfig:
     token: Optional[str] = None
 
 
+def _secrets_dict(name: str) -> Dict[str, Any]:
+    """Return a mapping stored under ``name`` in Streamlit secrets."""
+
+    value = st.secrets.get(name, {})  # type: ignore[arg-type]
+    if isinstance(value, dict):
+        return dict(value)
+    return {}
+
+
+def _github_settings() -> Dict[str, Any]:
+    """Return GitHub configuration from secrets in a normalised structure."""
+
+    secrets = _secrets_dict("github")
+    repo = secrets.get("repo")
+    path = secrets.get("path", "form_schema.json")
+    branch = secrets.get("branch", "main")
+    token = secrets.get("token")
+
+    if not (repo and path):
+        repo = st.secrets.get("github_repo", repo)
+        path = st.secrets.get("github_file_path", path)
+        branch = st.secrets.get("github_branch", branch)
+        token = st.secrets.get("github_token", token)
+
+    if repo and path:
+        return {"repo": repo, "path": path, "branch": branch, "token": token}
+    return {}
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def get_file(config: GHConfig) -> str:
     """Download a file from GitHub using the raw content endpoint."""
@@ -39,9 +68,9 @@ def get_file(config: GHConfig) -> str:
 def load_schema_from_github() -> Dict[str, Any]:
     """Fetch the questionnaire schema from GitHub if configuration is provided."""
 
-    github_settings = st.secrets.get("github", {})  # type: ignore[arg-type]
+    github_settings = _github_settings()
     repo = github_settings.get("repo")
-    path = github_settings.get("path", "form_schema.json")
+    path = github_settings.get("path")
     ref = github_settings.get("branch", "main")
     token = github_settings.get("token")
 
