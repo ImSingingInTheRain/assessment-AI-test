@@ -23,15 +23,31 @@ LIST_OPERATORS = {"in", "not_in", "contains_any", "contains_all", "one_of"}
 PREVIEW_ANSWERS_STATE_KEY = "editor_preview_answers"
 
 
+def _secrets_dict(name: str) -> Dict[str, Any]:
+    """Return a mapping stored under ``name`` in Streamlit secrets."""
+
+    value = st.secrets.get(name, {})  # type: ignore[arg-type]
+    if isinstance(value, dict):
+        return dict(value)
+    return {}
+
+
 def get_github_config() -> Optional[Dict[str, Any]]:
     """Return GitHub configuration from Streamlit secrets if available."""
 
-    secrets = st.secrets.get("github", {})  # type: ignore[arg-type]
+    secrets = _secrets_dict("github")
     token = secrets.get("token")
     repo = secrets.get("repo")
     path = secrets.get("path", "form_schema.json")
     branch = secrets.get("branch", "main")
     api_url = secrets.get("api_url", "https://api.github.com")
+
+    if not (token and repo and path):
+        token = st.secrets.get("github_token", token)
+        repo = st.secrets.get("github_repo", repo)
+        path = st.secrets.get("github_file_path", path)
+        branch = st.secrets.get("github_branch", branch)
+        api_url = st.secrets.get("github_api_url", api_url)
 
     if token and repo and path:
         return {
