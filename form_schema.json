@@ -1,0 +1,42 @@
+{
+  "title": "Tech Interest Survey",
+  "version": 1,
+  "questions": [
+    {
+      "key": "experience_level",
+      "label": "What is your experience level with Streamlit?",
+      "type": "single",
+      "options": [
+        "Beginner",
+        "Intermediate",
+        "Advanced"
+      ],
+      "default": "Beginner"
+    },
+    {
+      "key": "wants_updates",
+      "label": "Would you like to receive updates about this project?",
+      "type": "bool",
+      "default": true
+    },
+    {
+      "key": "topics",
+      "label": "Which topics are you interested in?",
+      "type": "multiselect",
+      "options": [
+        "Streamlit components",
+        "Deployments",
+        "Data visualization",
+        "Other"
+      ],
+      "show_if": {
+        "all": [
+          {
+            "field": "wants_updates",
+            "operator": "is_true"
+          }
+        ]
+      }
+    }
+  ]
+}
