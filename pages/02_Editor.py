@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from copy import deepcopy
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -16,6 +17,8 @@ from lib.github_backend import GitHubBackend, create_branch, ensure_pr, put_file
 SCHEMA_STATE_KEY = "editor_schema"
 DRAFT_BRANCH_STATE_KEY = "editor_draft_branch"
 QUESTION_TYPES = ["single", "multiselect", "bool", "text"]
+SHOW_IF_BUILDER_STATE_KEY = "editor_show_if_builder"
+LIST_OPERATORS = {"in", "not_in", "contains_any", "contains_all", "one_of"}
 
 
 def get_github_config() -> Optional[Dict[str, Any]]:
@@ -114,6 +117,177 @@ def parse_show_if(raw: str) -> Optional[Dict[str, Any]]:
         st.error(f"Invalid show_if JSON: {error.msg}")
         return None
 
+
+def sync_show_if_builder_state(schema: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Ensure the rule builder session state mirrors the current schema."""
+
+    builder_state: Dict[str, Dict[str, Any]] = st.session_state.setdefault(
+        SHOW_IF_BUILDER_STATE_KEY,
+        {},
+    )
+    valid_keys = set()
+    for question in schema.get("questions", []):
+        key = question.get("key")
+        if not key:
+            continue
+        valid_keys.add(key)
+        show_if = question.get("show_if") or {}
+        existing_state = builder_state.get(key, {})
+        active_bucket = existing_state.get("active", "all")
+        if show_if:
+            bucket_from_schema = next(iter(show_if.keys()))
+            if bucket_from_schema in {"all", "any"}:
+                active_bucket = bucket_from_schema
+        builder_state[key] = {
+            "all": deepcopy(show_if.get("all", existing_state.get("all", []))),
+            "any": deepcopy(show_if.get("any", existing_state.get("any", []))),
+            "active": active_bucket if active_bucket in {"all", "any"} else "all",
+        }
+
+    for key in list(builder_state.keys()):
+        if key not in valid_keys:
+            builder_state.pop(key)
+
+    return builder_state
+
+
+def render_show_if_builder(schema: Dict[str, Any]) -> None:
+    """Render a basic rule builder UI for question visibility."""
+
+    st.subheader("Show rule builder")
+
+    questions = schema.get("questions", [])
+    if not questions:
+        st.info("Add questions to configure show_if rules.")
+        return
+
+    builder_state = sync_show_if_builder_state(schema)
+
+    question_keys = [question.get("key") for question in questions if question.get("key")]
+    if not question_keys:
+        st.info("Questions require keys before rules can be created.")
+        return
+
+    target_key = st.selectbox(
+        "Select the question to control visibility for",
+        options=question_keys,
+        key="show_if_target_question",
+    )
+
+    target_question = next((q for q in questions if q.get("key") == target_key), None)
+    if target_question is None:
+        return
+
+    target_state = builder_state.setdefault(
+        target_key,
+        {"all": [], "any": [], "active": "all"},
+    )
+
+    bucket_key = f"show_if_bucket_{target_key}"
+    st.session_state.setdefault(bucket_key, target_state.get("active", "all"))
+    selected_bucket = st.radio(
+        "Combine clauses using",
+        options=["all", "any"],
+        index=["all", "any"].index(st.session_state[bucket_key]),
+        key=bucket_key,
+        horizontal=True,
+        help="Choose whether every clause must match or any single clause is sufficient.",
+    )
+    target_state["active"] = selected_bucket
+
+    target_state.setdefault("all", [])
+    target_state.setdefault("any", [])
+    target_state.setdefault(selected_bucket, [])
+
+    active_clauses = target_state.get(selected_bucket, [])
+    if active_clauses:
+        target_question["show_if"] = {selected_bucket: deepcopy(active_clauses)}
+    else:
+        target_question.pop("show_if", None)
+    st.session_state[SCHEMA_STATE_KEY] = schema
+
+    clause_question_options = [key for key in question_keys if key != target_key] or question_keys
+    clause_field = st.selectbox(
+        "Clause question",
+        options=clause_question_options,
+        key=f"show_if_clause_field_{target_key}",
+    )
+    operator = st.text_input(
+        "Operator",
+        key=f"show_if_operator_{target_key}",
+        help="Examples: equals, in, is_true, contains_any",
+    )
+    value_input = st.text_input(
+        "Value",
+        key=f"show_if_value_{target_key}",
+        help="For list operators provide comma-separated values. Leave blank for operators without a value.",
+    )
+
+    if st.button("Add clause", key=f"show_if_add_clause_{target_key}"):
+        if not clause_field:
+            st.error("Select a question to reference in the clause.")
+        elif not operator.strip():
+            st.error("Operator is required.")
+        else:
+            trimmed_operator = operator.strip()
+            values = [segment.strip() for segment in value_input.split(",") if segment.strip()]
+
+            clause: Dict[str, Any] = {
+                "field": clause_field,
+                "operator": trimmed_operator,
+            }
+            if trimmed_operator in LIST_OPERATORS or len(values) > 1:
+                if values:
+                    clause["value"] = values
+            elif values:
+                clause["value"] = values[0]
+
+            target_state[selected_bucket].append(clause)
+            if target_state[selected_bucket]:
+                target_question["show_if"] = {
+                    selected_bucket: deepcopy(target_state[selected_bucket])
+                }
+            else:
+                target_question.pop("show_if", None)
+
+            st.session_state[SCHEMA_STATE_KEY] = schema
+            st.session_state[f"show_if_value_{target_key}"] = ""
+            st.session_state[f"show_if_operator_{target_key}"] = ""
+            st.success("Clause added.")
+
+    if target_state[selected_bucket]:
+        st.markdown("**Current clauses**")
+        for idx, clause in enumerate(target_state[selected_bucket]):
+            clause_col, remove_col = st.columns([4, 1])
+            with clause_col:
+                st.json(clause)
+            with remove_col:
+                if st.button("Remove", key=f"remove_clause_{target_key}_{selected_bucket}_{idx}"):
+                    target_state[selected_bucket].pop(idx)
+                    if target_state[selected_bucket]:
+                        target_question["show_if"] = {
+                            selected_bucket: deepcopy(target_state[selected_bucket])
+                        }
+                    else:
+                        target_question.pop("show_if", None)
+                    st.session_state[SCHEMA_STATE_KEY] = schema
+                    st.experimental_rerun()
+
+    clear_col, _ = st.columns([1, 3])
+    with clear_col:
+        if st.button("Clear rule", key=f"clear_show_if_{target_key}"):
+            target_state["all"] = []
+            target_state["any"] = []
+            target_question.pop("show_if", None)
+            st.session_state[SCHEMA_STATE_KEY] = schema
+            st.success("Show rule cleared.")
+            st.experimental_rerun()
+
+    if target_question.get("show_if"):
+        st.markdown("**Current rule JSON**")
+        st.json(target_question["show_if"])
+    else:
+        st.info("No show_if rule configured for this question.")
 
 def validate_schema(schema: Dict[str, Any]) -> List[str]:
     """Run simple validation checks on the questionnaire schema."""
@@ -379,6 +553,8 @@ def main() -> None:
             render_question_editor(selected_question, schema)
     else:
         st.info("No questions defined yet. Add a question below.")
+
+    render_show_if_builder(schema)
 
     render_add_question(schema)
 
