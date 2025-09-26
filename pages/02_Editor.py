@@ -15,6 +15,7 @@ from Home import load_schema
 from lib.github_backend import GitHubBackend, create_branch, ensure_pr, put_file
 
 SCHEMA_STATE_KEY = "editor_schema"
+SCHEMA_SHA_STATE_KEY = "editor_schema_sha"
 DRAFT_BRANCH_STATE_KEY = "editor_draft_branch"
 QUESTION_TYPES = ["single", "multiselect", "bool", "text"]
 SHOW_IF_BUILDER_STATE_KEY = "editor_show_if_builder"
@@ -64,6 +65,14 @@ def get_schema() -> Dict[str, Any]:
     if SCHEMA_STATE_KEY not in st.session_state:
         schema = load_schema() or {"questions": []}
         st.session_state[SCHEMA_STATE_KEY] = schema
+    if SCHEMA_SHA_STATE_KEY not in st.session_state:
+        backend = get_backend()
+        if backend is not None:
+            try:
+                st.session_state[SCHEMA_SHA_STATE_KEY] = backend.get_file_sha()
+            except Exception as exc:  # pylint: disable=broad-except
+                st.error(f"Could not load schema metadata from GitHub: {exc}")
+                st.session_state[SCHEMA_SHA_STATE_KEY] = None
     return st.session_state[SCHEMA_STATE_KEY]
 
 
@@ -498,14 +507,25 @@ def handle_save_draft(schema: Dict[str, Any]) -> None:
 
     try:
         create_branch(config, branch)
-        backend = GitHubBackend(
-            token=config["token"],
-            repo=config["repo"],
-            path=config["path"],
-            branch=branch,
-            api_url=config.get("api_url", "https://api.github.com"),
-        )
+    except Exception as exc:  # pylint: disable=broad-except
+        st.error(f"Could not create draft branch: {exc}")
+        return
+
+    backend = GitHubBackend(
+        token=config["token"],
+        repo=config["repo"],
+        path=config["path"],
+        branch=branch,
+        api_url=config.get("api_url", "https://api.github.com"),
+    )
+
+    try:
         sha = backend.get_file_sha()
+    except Exception as exc:  # pylint: disable=broad-except
+        st.error(f"Could not read draft schema from GitHub: {exc}")
+        return
+
+    try:
         put_file(
             config,
             schema,
@@ -513,6 +533,11 @@ def handle_save_draft(schema: Dict[str, Any]) -> None:
             message=f"chore: save questionnaire draft ({branch})",
             branch=branch,
         )
+    except Exception as exc:  # pylint: disable=broad-except
+        st.error(f"Could not write draft schema to GitHub: {exc}")
+        return
+
+    try:
         pr = ensure_pr(
             config,
             branch,
@@ -520,7 +545,7 @@ def handle_save_draft(schema: Dict[str, Any]) -> None:
             body="Automated draft update from the questionnaire editor.",
         )
     except Exception as exc:  # pylint: disable=broad-except
-        st.error(f"Failed to save draft: {exc}")
+        st.error(f"Could not ensure draft pull request: {exc}")
         return
 
     st.success(f"Draft saved to branch {branch}.")
@@ -539,32 +564,55 @@ def handle_publish(schema: Dict[str, Any]) -> None:
         return
 
     config = get_github_config()
-    try:
-        if config is not None:
-            backend = GitHubBackend(
-                token=config["token"],
-                repo=config["repo"],
-                path=config["path"],
-                branch=config.get("branch", "main"),
-                api_url=config.get("api_url", "https://api.github.com"),
-            )
-            sha = backend.get_file_sha()
-            put_file(
+    if config is not None:
+        backend = GitHubBackend(
+            token=config["token"],
+            repo=config["repo"],
+            path=config["path"],
+            branch=config.get("branch", "main"),
+            api_url=config.get("api_url", "https://api.github.com"),
+        )
+
+        stored_sha = st.session_state.get(SCHEMA_SHA_STATE_KEY)
+        try:
+            latest_sha = backend.get_file_sha()
+        except Exception as exc:  # pylint: disable=broad-except
+            st.error(f"Could not read schema from GitHub: {exc}")
+            return
+
+        if stored_sha is not None and stored_sha != latest_sha:
+            st.error("Schema changed upstream—refresh and retry.")
+            st.session_state[SCHEMA_SHA_STATE_KEY] = latest_sha
+            return
+
+        try:
+            response = put_file(
                 config,
                 schema,
-                sha,
+                latest_sha,
                 message="chore: publish questionnaire schema",
                 branch=config.get("branch", "main"),
             )
-            st.success("Schema published to the main branch.")
-        else:
+        except Exception as exc:  # pylint: disable=broad-except
+            st.error(f"Could not publish schema to GitHub: {exc}")
+            return
+
+        published_sha = None
+        if isinstance(response, dict):
+            published_sha = response.get("content", {}).get("sha")
+        st.session_state[SCHEMA_SHA_STATE_KEY] = published_sha or latest_sha
+        st.success("Schema published to the main branch.")
+    else:
+        try:
             with open("form_schema.json", "w", encoding="utf-8") as schema_file:
                 json.dump(schema, schema_file, indent=2)
-            st.info("GitHub is not configured; schema saved locally instead.")
-    except Exception as exc:  # pylint: disable=broad-except
-        st.error(f"Failed to publish schema: {exc}")
-        return
+        except OSError as exc:
+            st.error(f"Could not save schema locally: {exc}")
+            return
+        st.info("GitHub is not configured; schema saved locally instead.")
+        st.session_state[SCHEMA_SHA_STATE_KEY] = None
 
+    st.cache_data.clear()
     load_schema.clear()
     st.session_state[SCHEMA_STATE_KEY] = schema
     st.session_state.pop(DRAFT_BRANCH_STATE_KEY, None)
