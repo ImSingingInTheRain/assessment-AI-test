@@ -32,30 +32,67 @@ def render_question_summary(questions: List[Dict[str, Any]]) -> None:
                 st.code(json.dumps(show_if, indent=2), language="json")
 
 
+def render_launch_checklist() -> None:
+    """Display the quick launch checklist for the workflow."""
+
+    st.subheader("Launch checklist")
+    st.markdown(
+        "\n".join(
+            [
+                "- [ ] 1. Configure secrets",
+                "- [ ] 2. Create PAT",
+                "- [ ] 3. Open PR on draft",
+                "- [ ] 4. Publish",
+            ]
+        )
+    )
+
+
 def main() -> None:
     """Entry point for the landing page."""
 
     st.set_page_config(page_title="Config-driven Questionnaire", page_icon="📝")
 
-    st.title("Config-driven Questionnaire")
+    st.title("Config-driven Questionnaire Hub")
     st.write(
-        "This demo illustrates a questionnaire rendered from a JSON schema "
-        "with declarative show/hide rules and a GitHub-backed editor."
+        "Welcome! This project demonstrates how a JSON schema can power both a "
+        "questionnaire experience and a lightweight editing interface."
     )
 
-    schema = load_schema()
+    st.write(
+        "Use the links below to jump into the interactive pages or review the "
+        "launch checklist to get your workflow ready."
+    )
+
+    st.subheader("Jump into the app")
+    st.page_link("pages/01_Questionnaire.py", label="Questionnaire", icon="🧾")
+    st.page_link("pages/02_Editor.py", label="Editor", icon="🛠️")
+
+    render_launch_checklist()
+
+    st.subheader("Schema health")
+    schema_status = st.empty()
+
+    try:
+        schema = load_schema()
+    except json.JSONDecodeError as exc:  # pragma: no cover - streamlit UI feedback
+        schema_status.error("Schema failed to parse. See details below for fixes.")
+        st.code(str(exc))
+        return
+
     if not schema:
-        st.error("Schema file is missing. Please add form_schema.json to the project.")
+        schema_status.warning("Schema file not found. Add form_schema.json to continue.")
         return
 
     questions: List[Dict[str, Any]] = schema.get("questions", [])
-    st.success(f"Loaded {len(questions)} question(s) from the schema.")
-    render_question_summary(questions)
+    schema_status.success(f"Schema loaded with {len(questions)} question(s).")
 
-    st.info(
-        "Use the Questionnaire page to answer the form and the Editor page to "
-        "manage questions."
-    )
+    meta_col, version_col = st.columns(2)
+    meta_col.metric("Title", schema.get("title", "—"))
+    version_col.metric("Version", schema.get("version", "—"))
+
+    with st.expander("Question overview", expanded=False):
+        render_question_summary(questions)
 
 
 if __name__ == "__main__":
