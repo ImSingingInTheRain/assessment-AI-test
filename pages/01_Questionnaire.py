@@ -2,11 +2,55 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Sequence
+import json
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Sequence
 
+import requests
 import streamlit as st
 
 from Home import load_schema
+
+
+@dataclass(frozen=True)
+class GHConfig:
+    """Configuration required to fetch a file from GitHub."""
+
+    repo: str
+    path: str
+    ref: str = "main"
+    token: Optional[str] = None
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_file(config: GHConfig) -> str:
+    """Download a file from GitHub using the raw content endpoint."""
+
+    headers = {"Accept": "application/vnd.github.v3.raw"}
+    if config.token:
+        headers["Authorization"] = f"Bearer {config.token}"
+
+    url = f"https://raw.githubusercontent.com/{config.repo}/{config.ref}/{config.path}"
+    response = requests.get(url, headers=headers, timeout=10)
+    response.raise_for_status()
+    return response.text
+
+
+def load_schema_from_github() -> Dict[str, Any]:
+    """Fetch the questionnaire schema from GitHub if configuration is provided."""
+
+    github_settings = st.secrets.get("github", {})  # type: ignore[arg-type]
+    repo = github_settings.get("repo")
+    path = github_settings.get("path", "form_schema.json")
+    ref = github_settings.get("branch", "main")
+    token = github_settings.get("token")
+
+    if not repo or not path:
+        return {}
+
+    config = GHConfig(repo=repo, path=path, ref=ref, token=token)
+    contents = get_file(config)
+    return json.loads(contents)
 
 ANSWERS_STATE_KEY = "questionnaire_answers"
 
@@ -142,7 +186,31 @@ def main() -> None:
 
     st.title("Questionnaire")
 
-    schema = load_schema()
+    schema: Dict[str, Any] = {}
+    github_error: Optional[str] = None
+    try:
+        schema = load_schema_from_github()
+    except requests.RequestException:
+        github_error = (
+            "Unable to load the questionnaire schema from GitHub right now. "
+            "Showing the local form definition instead."
+        )
+    except json.JSONDecodeError:
+        github_error = (
+            "The schema file on GitHub is not valid JSON. Using the local copy "
+            "of form_schema.json instead."
+        )
+    except Exception:
+        github_error = (
+            "Something went wrong while reading the schema from GitHub. "
+            "Falling back to the local form definition."
+        )
+
+    if github_error:
+        st.error(github_error)
+
+    if not schema:
+        schema = load_schema()
     if not schema:
         st.error("Schema failed to load. Please check form_schema.json.")
         return
