@@ -1,0 +1,59 @@
+name: Validate schema
+
+on:
+  pull_request:
+    paths:
+      - form_schema.json
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+      - name: Run schema checks
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          schema = json.loads(Path('form_schema.json').read_text())
+          questions = schema.get('questions', [])
+
+          keys = []
+          seen = set()
+          for q in questions:
+              key = q.get('key')
+              if key is None:
+                  raise SystemExit('Question without key found')
+              if key in seen:
+                  raise SystemExit(f'Duplicate question key: {key}')
+              seen.add(key)
+              keys.append(key)
+
+          key_set = set(keys)
+
+          def iter_fields(node):
+              if isinstance(node, dict):
+                  field = node.get('field')
+                  if field is not None:
+                      yield field
+                  for cond_key in ('all', 'any', 'none'):
+                      if cond_key in node:
+                          for child in node[cond_key]:
+                              yield from iter_fields(child)
+              elif isinstance(node, list):
+                  for item in node:
+                      yield from iter_fields(item)
+
+          for q in questions:
+              show_if = q.get('show_if')
+              if show_if:
+                  for field in iter_fields(show_if):
+                      if field not in key_set:
+                          raise SystemExit(f"Missing referenced question key: {field}")
+
+          print('OK')
+          PY
