@@ -810,6 +810,10 @@ def render_show_if_builder(
     _sync_question_rule()
 
     group_selector_key = f"show_if_active_group_{question_key}"
+    pending_selector_key = f"show_if_pending_active_group_{question_key}"
+    pending_active_group = st.session_state.pop(pending_selector_key, None)
+    if pending_active_group is not None:
+        st.session_state[group_selector_key] = pending_active_group
     if groups:
         if group_selector_key not in st.session_state:
             st.session_state[group_selector_key] = (
@@ -858,7 +862,7 @@ def render_show_if_builder(
         _ensure_group_labels(groups)
         new_index = len(groups) - 1
         target_state["active_group"] = new_index
-        st.session_state[group_selector_key] = new_index
+        st.session_state[pending_selector_key] = new_index
         _sync_question_rule()
         st.success("Rule group added.")
         _rerun_app()
@@ -950,7 +954,7 @@ def render_show_if_builder(
             else:
                 new_index = -1
             target_state["active_group"] = new_index
-            st.session_state[group_selector_key] = new_index
+            st.session_state[pending_selector_key] = new_index
             _sync_question_rule()
             st.success("Rule group removed.")
             _rerun_app()
