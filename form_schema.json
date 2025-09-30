@@ -139,6 +139,11 @@
           }
         ]
       }
+    },
+    {
+      "key": "name",
+      "label": "Provide a name for the solution you are assessing",
+      "type": "text"
     }
   ]
 }
