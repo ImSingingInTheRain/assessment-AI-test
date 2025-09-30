@@ -49,16 +49,16 @@ def _is_clause_rule(value: Any) -> bool:
     return isinstance(value, dict) and "operator" in value and "all" not in value and "any" not in value
 
 
-def _normalize_group_connectors(groups: List[Dict[str, Any]]) -> None:
-    """Ensure rule group connector metadata is internally consistent."""
+def _normalize_groups(groups: List[Dict[str, Any]]) -> None:
+    """Ensure rule group metadata is internally consistent."""
 
-    for index, group in enumerate(groups):
-        if index == 0:
-            group["connector"] = None
-        else:
-            connector = group.get("connector")
-            if connector not in {"all", "any"}:
-                group["connector"] = "all"
+    for group in groups:
+        if group.get("mode") not in {"all", "any"}:
+            group["mode"] = "all"
+        if not isinstance(group.get("clauses"), list):
+            group["clauses"] = []
+        if "connector" in group:
+            group.pop("connector", None)
 
 
 def _generate_group_label(groups: Sequence[Dict[str, Any]]) -> str:
@@ -108,44 +108,48 @@ def _group_to_rule(group: Dict[str, Any]) -> Dict[str, Any]:
     return {mode: clauses}
 
 
-def _groups_to_rule(groups: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _groups_to_rule(
+    groups: List[Dict[str, Any]], combine_mode: str = "all"
+) -> Dict[str, Any]:
     """Collapse an ordered list of rule groups into a nested rule tree."""
 
     normalized = [group for group in groups if group.get("clauses")]
     if not normalized:
         return {}
 
-    _normalize_group_connectors(normalized)
+    _normalize_groups(normalized)
 
-    expression: Dict[str, Any] = _group_to_rule(normalized[0])
-    for group in normalized[1:]:
-        connector = group.get("connector") or "all"
-        rhs = _group_to_rule(group)
-        if not rhs:
-            continue
-        expression = {connector: [expression, rhs]}
-    return expression
+    combine_mode = combine_mode if combine_mode in {"all", "any"} else "all"
+
+    rendered_groups = []
+    for group in normalized:
+        rendered = _group_to_rule(group)
+        if rendered:
+            rendered_groups.append(rendered)
+
+    if not rendered_groups:
+        return {}
+
+    if len(rendered_groups) == 1:
+        return rendered_groups[0]
+
+    return {combine_mode: rendered_groups}
 
 
-def _rule_to_groups(rule: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+def _rule_to_groups(rule: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Attempt to decompose a rule tree into ordered builder groups."""
 
     if not rule:
-        return []
+        return {"groups": [], "combine_mode": "all"}
 
     groups: List[Dict[str, Any]] = []
 
-    def _traverse(node: Any, connector: Optional[str]) -> bool:
+    def _extract_group(node: Any) -> Optional[Dict[str, Any]]:
         if _is_clause_rule(node):
-            groups.append({
-                "mode": "all",
-                "clauses": [deepcopy(node)],
-                "connector": connector,
-            })
-            return True
+            return {"mode": "all", "clauses": [deepcopy(node)]}
 
         if not isinstance(node, dict):
-            return False
+            return None
 
         key: Optional[str] = None
         if "all" in node:
@@ -154,36 +158,51 @@ def _rule_to_groups(rule: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
             key = "any"
 
         if key is None:
-            return False
+            return None
 
         items = node.get(key)
         if not isinstance(items, list):
-            return False
+            return None
 
         if all(_is_clause_rule(item) for item in items):
-            groups.append({
+            return {
                 "mode": key,
                 "clauses": [deepcopy(item) for item in items],
-                "connector": connector,
-            })
-            return True
+            }
 
         if len(items) == 1:
-            return _traverse(items[0], connector)
+            return _extract_group(items[0])
 
-        if len(items) == 2:
-            left, right = items
-            if not _traverse(left, connector):
-                return False
-            return _traverse(right, key)
-
-        return False
-
-    if not _traverse(rule, None):
         return None
 
-    _normalize_group_connectors(groups)
-    return groups
+    potential_group = _extract_group(rule)
+    if potential_group is not None:
+        return {"groups": [potential_group], "combine_mode": "all"}
+
+    if not isinstance(rule, dict):
+        return None
+
+    top_key: Optional[str] = None
+    if "all" in rule:
+        top_key = "all"
+    elif "any" in rule:
+        top_key = "any"
+
+    if top_key is None:
+        return None
+
+    items = rule.get(top_key)
+    if not isinstance(items, list):
+        return None
+
+    for item in items:
+        extracted = _extract_group(item)
+        if extracted is None:
+            return None
+        groups.append(extracted)
+
+    _normalize_groups(groups)
+    return {"groups": groups, "combine_mode": top_key}
 
 OPERATOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     "equals": {
@@ -451,32 +470,39 @@ def sync_show_if_builder_state(schema: Dict[str, Any]) -> Dict[str, Dict[str, An
         show_if = question.get("show_if") or {}
         existing_state = builder_state.get(key, {})
 
-        parsed_groups = _rule_to_groups(show_if) if show_if else []
-        unsupported = bool(show_if) and parsed_groups is None
+        parsed_state = _rule_to_groups(show_if) if show_if else {"groups": [], "combine_mode": "all"}
+        unsupported = bool(show_if) and parsed_state is None
 
         if unsupported:
-            groups = deepcopy(existing_state.get("groups", [])) or [
-                {"mode": "all", "clauses": [], "connector": None}
-            ]
+            groups = deepcopy(existing_state.get("groups", []))
+            combine_mode = existing_state.get("combine_mode", "all")
         else:
             groups = (
-                deepcopy(parsed_groups)
-                if parsed_groups is not None and parsed_groups != []
+                deepcopy(parsed_state["groups"])
+                if parsed_state is not None
                 else deepcopy(existing_state.get("groups", []))
             )
+            combine_mode = (
+                parsed_state.get("combine_mode", "all")
+                if parsed_state is not None
+                else existing_state.get("combine_mode", "all")
+            )
 
-        if not groups:
-            groups = [{"mode": "all", "clauses": [], "connector": None}]
+        if groups is None:
+            groups = []
 
-        _normalize_group_connectors(groups)
+        _normalize_groups(groups)
         _ensure_group_labels(groups)
 
-        active_group = existing_state.get("active_group", 0)
-        if not 0 <= active_group < len(groups):
+        active_group = existing_state.get("active_group", -1 if not groups else 0)
+        if not groups:
+            active_group = -1
+        elif not 0 <= active_group < len(groups):
             active_group = 0
 
         builder_state[key] = {
             "groups": groups,
+            "combine_mode": combine_mode if combine_mode in {"all", "any"} else "all",
             "active_group": active_group,
             "unsupported": unsupported,
         }
@@ -732,10 +758,9 @@ def render_show_if_builder(
     target_state = builder_state.setdefault(
         question_key,
         {
-            "groups": [
-                {"mode": "all", "clauses": [], "connector": None, "label": "Group 1"}
-            ],
-            "active_group": 0,
+            "groups": [],
+            "combine_mode": "all",
+            "active_group": -1,
             "unsupported": False,
         },
     )
@@ -747,25 +772,26 @@ def render_show_if_builder(
         )
         return
 
-    groups = target_state.setdefault(
-        "groups",
-        [{"mode": "all", "clauses": [], "connector": None, "label": "Group 1"}],
-    )
-    if not groups:
-        groups.append({"mode": "all", "clauses": [], "connector": None})
-
-    _normalize_group_connectors(groups)
+    groups = target_state.setdefault("groups", [])
+    _normalize_groups(groups)
     _ensure_group_labels(groups)
 
+    combine_mode = target_state.get("combine_mode", "all")
+    if combine_mode not in {"all", "any"}:
+        combine_mode = "all"
+    target_state["combine_mode"] = combine_mode
+
     active_group_index = target_state.get("active_group", 0)
-    if not 0 <= active_group_index < len(groups):
+    if not groups:
+        active_group_index = -1
+    elif not 0 <= active_group_index < len(groups):
         active_group_index = 0
     target_state["active_group"] = active_group_index
 
     def _sync_question_rule() -> None:
         """Update the question schema and JSON editor when rules change."""
 
-        rule_expression = _groups_to_rule(groups)
+        rule_expression = _groups_to_rule(groups, target_state.get("combine_mode", "all"))
         if rule_expression:
             target_question["show_if"] = rule_expression
         else:
@@ -784,72 +810,82 @@ def render_show_if_builder(
     _sync_question_rule()
 
     group_selector_key = f"show_if_active_group_{question_key}"
-    if group_selector_key not in st.session_state:
-        st.session_state[group_selector_key] = active_group_index
-    if not 0 <= st.session_state[group_selector_key] < len(groups):
-        st.session_state[group_selector_key] = 0
+    if groups:
+        if group_selector_key not in st.session_state:
+            st.session_state[group_selector_key] = (
+                active_group_index if active_group_index >= 0 else 0
+            )
+        if not 0 <= st.session_state[group_selector_key] < len(groups):
+            st.session_state[group_selector_key] = 0
+    else:
+        st.session_state[group_selector_key] = -1
 
-    selector_col, add_group_col = st.columns([3, 1])
-    add_group_clicked = False
-    with add_group_col:
-        add_group_clicked = st.button(
-            "Add group", key=f"show_if_add_group_{question_key}"
+    st.markdown("**Current rule groups**")
+    if groups:
+        for idx, group in enumerate(groups):
+            mode_label = str(group.get("mode", "all")).upper()
+            clause_count = len(group.get("clauses", []))
+            label = group.get("label", f"Group {idx + 1}")
+            st.caption(
+                f"{label}: {mode_label} · {clause_count} clause"
+                f"{'s' if clause_count != 1 else ''}"
+            )
+    else:
+        st.info("No rules are set.")
+
+    selected_group_index = -1
+    if groups:
+        selected_group_index = st.selectbox(
+            "Select rule group to configure",
+            options=list(range(len(groups))),
+            key=group_selector_key,
+            format_func=lambda idx: groups[idx].get("label", f"Group {idx + 1}"),
         )
+        target_state["active_group"] = selected_group_index
+
+    add_group_clicked = st.button(
+        "Add new rule group", key=f"show_if_add_group_{question_key}"
+    )
 
     if add_group_clicked:
-        groups.append(
-            {
-                "mode": "all",
-                "clauses": [],
-                "connector": "all",
-                "label": _generate_group_label(groups),
-            }
-        )
-        _normalize_group_connectors(groups)
+        new_group = {
+            "mode": "all",
+            "clauses": [],
+            "label": _generate_group_label(groups),
+        }
+        groups.append(new_group)
+        _normalize_groups(groups)
         _ensure_group_labels(groups)
         new_index = len(groups) - 1
         target_state["active_group"] = new_index
         st.session_state[group_selector_key] = new_index
         _sync_question_rule()
-        st.success("Group added.")
+        st.success("Rule group added.")
         _rerun_app()
-
-    with selector_col:
-        selected_group_index = st.selectbox(
-            "Select rule group",
-            options=list(range(len(groups))),
-            key=group_selector_key,
-            format_func=lambda idx: groups[idx].get("label", f"Group {idx + 1}"),
-        )
-
-    selected_group_index = st.session_state[group_selector_key]
-    if not 0 <= selected_group_index < len(groups):
-        selected_group_index = 0
-    target_state["active_group"] = selected_group_index
-
-    active_group = groups[selected_group_index]
-    _normalize_group_connectors(groups)
-    _ensure_group_labels(groups)
+        return
 
     if len(groups) > 1:
-        summary_parts: List[str] = []
-        for idx, group in enumerate(groups):
-            connector = group.get("connector")
-            mode_label = str(group.get("mode", "all")).upper()
-            clause_count = len(group.get("clauses", []))
-            label = group.get("label", f"Group {idx + 1}")
-            description = (
-                f"{label}: {mode_label} ({clause_count} clause"
-                f"{'s' if clause_count != 1 else ''})"
-            )
-            if idx == 0:
-                summary_parts.append(description)
-            else:
-                connector_label = (connector or "all").upper()
-                summary_parts.append(f"{connector_label} {description}")
-        st.caption(" · ".join(summary_parts))
+        combine_key = f"show_if_group_combine_{question_key}"
+        combine_choice = st.radio(
+            "When evaluating rule groups, require",
+            options=("all", "any"),
+            index=(0 if target_state.get("combine_mode", "all") == "all" else 1),
+            key=combine_key,
+            horizontal=True,
+            format_func=lambda value: "all groups" if value == "all" else "any group",
+        )
+        if combine_choice != target_state.get("combine_mode"):
+            target_state["combine_mode"] = combine_choice
+            _sync_question_rule()
 
-    label_col, mode_col, connector_col, remove_col = st.columns([3, 2, 2, 1])
+    if selected_group_index == -1:
+        return
+
+    active_group = groups[selected_group_index]
+    _normalize_groups(groups)
+    _ensure_group_labels(groups)
+
+    label_col, mode_col, remove_col, save_col = st.columns([3, 2, 1, 1])
 
     group_label_key = f"show_if_group_label_{question_key}_{selected_group_index}"
     current_label = active_group.get("label", f"Group {selected_group_index + 1}")
@@ -898,42 +934,35 @@ def render_show_if_builder(
             active_group["mode"] = mode_choice
             _sync_question_rule()
 
-    with connector_col:
-        if selected_group_index > 0:
-            connector_key = f"show_if_group_connector_{question_key}_{selected_group_index}"
-            current_connector = active_group.get("connector") or "all"
-            connector_choice = st.radio(
-                "Combine with previous groups using",
-                options=("all", "any"),
-                index=(0 if current_connector == "all" else 1),
-                key=connector_key,
-                horizontal=True,
-                format_func=lambda value: "AND" if value == "all" else "OR",
-            )
-            if connector_choice != current_connector:
-                active_group["connector"] = connector_choice
-                _normalize_group_connectors(groups)
-                _sync_question_rule()
-        else:
-            active_group["connector"] = None
-
     with remove_col:
-        if len(groups) > 1:
-            if st.button(
-                "Remove group",
-                key=f"show_if_remove_group_{question_key}_{selected_group_index}",
-            ):
-                groups.pop(selected_group_index)
-                if not groups:
-                    groups.append({"mode": "all", "clauses": [], "connector": None})
-                _normalize_group_connectors(groups)
-                _ensure_group_labels(groups)
+        remove_disabled = len(groups) == 0
+        remove_clicked = st.button(
+            "Remove group",
+            key=f"show_if_remove_group_{question_key}_{selected_group_index}",
+            disabled=remove_disabled,
+        )
+        if remove_clicked and not remove_disabled:
+            groups.pop(selected_group_index)
+            _normalize_groups(groups)
+            _ensure_group_labels(groups)
+            if groups:
                 new_index = min(selected_group_index, len(groups) - 1)
-                target_state["active_group"] = new_index
-                st.session_state[group_selector_key] = new_index
-                _sync_question_rule()
-                st.success("Group removed.")
-                _rerun_app()
+            else:
+                new_index = -1
+            target_state["active_group"] = new_index
+            st.session_state[group_selector_key] = new_index
+            _sync_question_rule()
+            st.success("Rule group removed.")
+            _rerun_app()
+            return
+
+    with save_col:
+        if st.button(
+            "Save group",
+            key=f"show_if_save_group_{question_key}_{selected_group_index}",
+        ):
+            _sync_question_rule()
+            st.success("Rule group saved.")
 
     active_group.setdefault("clauses", [])
 
@@ -1125,12 +1154,10 @@ def render_show_if_builder(
     clear_col, _ = st.columns([1, 3])
     with clear_col:
         if st.button("Clear rule", key=f"clear_show_if_{question_key}"):
-            target_state["groups"] = [
-                {"mode": "all", "clauses": [], "connector": None}
-            ]
-            _ensure_group_labels(target_state["groups"])
-            st.session_state[group_selector_key] = 0
-            target_state["active_group"] = 0
+            target_state["groups"] = []
+            target_state["combine_mode"] = "all"
+            st.session_state[group_selector_key] = -1
+            target_state["active_group"] = -1
             _sync_question_rule()
             st.success("Show rule cleared.")
             _rerun_app()
