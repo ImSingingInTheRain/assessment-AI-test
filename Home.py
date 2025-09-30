@@ -1,6 +1,7 @@
 """Landing page for the questionnaire app."""
 
 import json
+from html import escape as html_escape
 from typing import Any, Dict, Iterable, List, Tuple
 
 import streamlit as st
@@ -11,6 +12,7 @@ from lib.questionnaire_utils import (
     iter_questionnaires,
     normalize_questionnaires,
 )
+from lib.ui_theme import apply_app_theme, page_header, render_card
 
 
 @st.cache_data(show_spinner=False)
@@ -27,51 +29,88 @@ def render_question_summary(questionnaires: Iterable[Tuple[str, Dict[str, Any]]]
     for questionnaire_key, questionnaire in questionnaires:
         questions: List[Dict[str, Any]] = questionnaire.get("questions", [])
         label = questionnaire.get("label", questionnaire_key)
-        with st.container():
-            st.markdown(f"### {label}")
-            if not questions:
-                st.caption("No questions configured yet.")
-                continue
-            for question in questions:
-                st.markdown(
-                    f"**{question.get('label', 'Untitled question')}**  "
-                    f"Key: `{question.get('key', 'n/a')}`  ·  "
-                    f"Type: `{question.get('type', 'unknown')}`"
+        safe_label = html_escape(str(label))
+        if not questions:
+            render_card(
+                "<p class='app-muted'>No questions configured yet.</p>",
+                title=safe_label,
+                compact=True,
+            )
+            continue
+
+        question_markup: List[str] = []
+        for question in questions:
+            question_label = html_escape(str(question.get("label", "Untitled question")))
+            question_key = html_escape(str(question.get("key", "n/a")))
+            question_type = html_escape(str(question.get("type", "unknown")))
+            item_markup = [
+                f"<strong>{question_label}</strong>",
+                (
+                    f"<div class='app-question-list__meta'>"
+                    f"Key: <code>{question_key}</code> · Type: <code>{question_type}</code>"
+                    "</div>"
+                ),
+            ]
+            if show_if := question.get("show_if"):
+                show_if_code = html_escape(json.dumps(show_if, indent=2))
+                item_markup.append(
+                    f"<pre><code class='language-json'>{show_if_code}</code></pre>"
                 )
-                if show_if := question.get("show_if"):
-                    st.code(json.dumps(show_if, indent=2), language="json")
+            question_markup.append(
+                f"<li class='app-question-list__item'>{''.join(item_markup)}</li>"
+            )
+
+        render_card(
+            f"<ul class='app-question-list'>{''.join(question_markup)}</ul>",
+            title=safe_label,
+            compact=True,
+        )
 
 
 def render_launch_checklist() -> None:
     """Display the quick launch checklist for the workflow."""
 
-    st.subheader("Launch checklist")
-    st.markdown(
-        "\n".join(
-            [
-                "- [ ] 1. Configure secrets",
-                "- [ ] 2. Create PAT",
-                "- [ ] 3. Open PR on draft",
-                "- [ ] 4. Publish",
-            ]
-        )
+    checklist_steps = [
+        "Configure secrets",
+        "Create personal access token",
+        "Open a draft pull request",
+        "Publish the updated schema",
+    ]
+    checklist_markup = "".join(
+        f"<li><span class='app-checklist__badge'>{index}</span>{html_escape(step)}</li>"
+        for index, step in enumerate(checklist_steps, start=1)
+    )
+    render_card(
+        f"<ul class='app-checklist'>{checklist_markup}</ul>",
+        title="Launch checklist",
+        compact=True,
     )
 
 
 def main() -> None:
     """Entry point for the landing page."""
 
-    st.set_page_config(page_title="Config-driven Questionnaire", page_icon="📝")
+    apply_app_theme(page_title="Config-driven Questionnaire", page_icon="📝")
 
-    st.title("Config-driven Questionnaire Hub")
-    st.write(
-        "Welcome! This project demonstrates how a JSON schema can power both a "
-        "questionnaire experience and a lightweight editing interface."
+    page_header(
+        "Config-driven Questionnaire Hub",
+        "A single JSON schema powering runner, editor, and review workflows.",
+        icon="📝",
     )
 
-    st.write(
-        "Use the links below to jump into the interactive pages or review the "
-        "launch checklist to get your workflow ready."
+    render_card(
+        """
+        <p>
+            Welcome! This project demonstrates how a centrally managed JSON schema can
+            deliver a polished questionnaire experience alongside tools for editing and
+            reviewing responses.
+        </p>
+        <p>
+            Use the quick links and launch checklist below to jump into the workflow that
+            matters most for your team.
+        </p>
+        """,
+        title="Getting started",
     )
 
     render_launch_checklist()

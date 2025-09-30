@@ -22,6 +22,7 @@ from Home import load_schema
 from lib.github_backend import GitHubBackend, create_branch, ensure_pr, put_file
 from lib.form_store import load_combined_schema, local_form_path, resolve_remote_form_path
 import lib.questionnaire_utils as questionnaire_utils
+from lib.ui_theme import apply_app_theme, page_header
 
 EDITOR_SELECTED_STATE_KEY = questionnaire_utils.EDITOR_SELECTED_STATE_KEY
 normalize_questionnaires = questionnaire_utils.normalize_questionnaires
@@ -2648,10 +2649,14 @@ def render_add_question(schema: Dict[str, Any]) -> None:
 def main() -> None:
     """Render the questionnaire editor page."""
 
+    apply_app_theme(page_title="Questionnaire editor", page_icon="🛠️")
     require_authentication()
 
-    st.title("Questionnaire editor")
-    st.caption("Authentication is assumed to have already succeeded.")
+    page_header(
+        "Questionnaire editor",
+        "Authentication is assumed to have already succeeded.",
+        icon="🛠️",
+    )
 
     schema = get_schema()
     questionnaires = schema.get("questionnaires", {})
