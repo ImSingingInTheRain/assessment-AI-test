@@ -9,7 +9,9 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 import streamlit as st
 
-from lib.questionnaire_utils import RECORD_NAME_KEY
+from lib import questionnaire_utils
+
+RECORD_NAME_KEY = getattr(questionnaire_utils, "RECORD_NAME_KEY", "record_name")
 
 SUBMISSIONS_DIR = Path("system_registration/submissions")
 DEFAULT_TABLE_COLUMNS = ("Submission ID", "Submitted at", "Questionnaire")
