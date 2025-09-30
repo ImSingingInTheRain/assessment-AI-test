@@ -531,6 +531,8 @@ def render_show_if_builder(
 ) -> None:
     """Render the guided rule builder UI scoped to a single question."""
 
+    json_override_key = f"{json_state_key}_override"
+
     questions = schema.get("questions", [])
     if not questions:
         st.info("Add questions to configure show_if rules.")
@@ -584,12 +586,12 @@ def render_show_if_builder(
             target_question.pop("show_if", None)
 
         if target_question.get("show_if"):
-            st.session_state[json_state_key] = json.dumps(
+            st.session_state[json_override_key] = json.dumps(
                 target_question["show_if"],
                 indent=2,
             )
         else:
-            st.session_state[json_state_key] = ""
+            st.session_state[json_override_key] = ""
 
         st.session_state[SCHEMA_STATE_KEY] = schema
 
@@ -1158,6 +1160,7 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
 
     original_key = question.get("key", "")
     show_if_json_key = f"show_if_json_{original_key}"
+    show_if_json_override_key = f"{show_if_json_key}_override"
     initial_show_if = (
         json.dumps(question.get("show_if", {}), indent=2)
         if question.get("show_if")
@@ -1165,6 +1168,11 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
     )
     if show_if_json_key not in st.session_state:
         st.session_state[show_if_json_key] = initial_show_if
+
+    if show_if_json_override_key in st.session_state:
+        st.session_state[show_if_json_key] = st.session_state.pop(
+            show_if_json_override_key
+        )
 
     with st.form(f"edit_{original_key}"):
         st.subheader(f"Edit question: {question.get('label', original_key)}")
