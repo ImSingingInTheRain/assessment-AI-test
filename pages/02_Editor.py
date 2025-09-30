@@ -138,12 +138,6 @@ def require_authentication() -> None:
     st.stop()
 
 
-def parse_options(raw: str) -> List[str]:
-    """Parse newline-separated options into a clean list."""
-
-    return [option.strip() for option in raw.splitlines() if option.strip()]
-
-
 def parse_show_if(raw: str) -> Optional[Dict[str, Any]]:
     """Parse the JSON show_if structure provided by the user."""
 
@@ -154,6 +148,76 @@ def parse_show_if(raw: str) -> Optional[Dict[str, Any]]:
     except json.JSONDecodeError as error:
         st.error(f"Invalid show_if JSON: {error.msg}")
         return None
+
+
+def render_options_editor(
+    base_key: str, question_type: str, existing_options: Sequence[str] | None
+) -> List[str]:
+    """Render a dynamic options editor for list-based questions."""
+
+    if question_type not in {"single", "multiselect"}:
+        st.caption("Options are not used for this question type.")
+        return []
+
+    st.caption(
+        "Add the answer choices below. Use the ⊕ button to create new rows and drag to reorder."
+    )
+
+    option_rows = (
+        [{"Option": option} for option in existing_options or []]
+        or [{"Option": ""}]
+    )
+    edited_rows = st.data_editor(
+        option_rows,
+        num_rows="dynamic",
+        hide_index=True,
+        use_container_width=True,
+        key=f"{base_key}_options_editor_{question_type}",
+    )
+
+    if hasattr(edited_rows, "to_dict"):
+        rows_iterable = edited_rows.to_dict(orient="records")  # type: ignore[call-arg]
+    elif isinstance(edited_rows, list):
+        rows_iterable = edited_rows
+    else:
+        rows_iterable = []
+
+    cleaned: List[str] = []
+    for row in rows_iterable:
+        value = row.get("Option", "") if isinstance(row, dict) else None
+        if not isinstance(value, str):
+            continue
+        trimmed = value.strip()
+        if trimmed:
+            cleaned.append(trimmed)
+
+    if not cleaned:
+        st.info("Provide at least one option to offer selectable answers.")
+
+    return cleaned
+
+
+def render_question_overview(questions: Sequence[Dict[str, Any]]) -> None:
+    """Show a compact table summarising all configured questions."""
+
+    st.subheader("Question overview")
+    if not questions:
+        st.info("Questions will appear here once added.")
+        return
+
+    overview_rows = []
+    for index, question in enumerate(questions, start=1):
+        overview_rows.append(
+            {
+                "#": index,
+                "Label": question.get("label", ""),
+                "Key": question.get("key", ""),
+                "Type": question.get("type", ""),
+                "Conditions": "Yes" if question.get("show_if") else "No",
+            }
+        )
+
+    st.dataframe(overview_rows, use_container_width=True, hide_index=True)
 
 
 def sync_show_if_builder_state(schema: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
@@ -825,26 +889,60 @@ def handle_publish(schema: Dict[str, Any]) -> None:
 def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> None:
     """Render the editor form for a single question."""
 
-    with st.form(f"edit_{question['key']}"):
-        st.subheader(f"Edit question: {question['label']}")
-        label = st.text_input("Label", value=question.get("label", ""))
-        question_type = st.selectbox(
-            "Type",
-            options=QUESTION_TYPES,
-            index=QUESTION_TYPES.index(question.get("type", "text")),
-        )
-        help_text = st.text_input("Help text", value=question.get("help", ""))
-        placeholder = st.text_input("Placeholder", value=question.get("placeholder", ""))
-        options_raw = st.text_area(
-            "Options (one per line)",
-            value="\n".join(question.get("options", [])),
-            help="Applicable to single and multiselect questions.",
-        )
-        show_if_raw = st.text_area(
-            "Show if (JSON)",
-            value=json.dumps(question.get("show_if", {}), indent=2) if question.get("show_if") else "",
-            help="Provide a JSON object describing show/hide rules.",
-        )
+    key = question.get("key", "")
+    with st.form(f"edit_{key}"):
+        st.subheader(f"Edit question: {question.get('label', key)}")
+        st.caption(f"Key: `{key}`")
+
+        col_label, col_type = st.columns([3, 2])
+        with col_label:
+            label = st.text_input(
+                "Question label",
+                value=question.get("label", ""),
+                help="Shown to respondents on the questionnaire page.",
+            )
+        with col_type:
+            question_type = st.selectbox(
+                "Answer type",
+                options=QUESTION_TYPES,
+                index=QUESTION_TYPES.index(question.get("type", "text")),
+                help="Determines how the answer is captured.",
+            )
+
+        with st.expander(
+            "Guidance and placeholders",
+            expanded=bool(question.get("help") or question.get("placeholder")),
+        ):
+            help_text = st.text_area(
+                "Help text",
+                value=question.get("help", ""),
+                help="Optional supporting text displayed beneath the label.",
+            )
+            placeholder = st.text_input(
+                "Placeholder",
+                value=question.get("placeholder", ""),
+                help="Appears inside the input when no answer has been provided.",
+            )
+
+        options = render_options_editor(key, question_type, question.get("options"))
+
+        with st.expander(
+            "Visibility conditions",
+            expanded=bool(question.get("show_if")),
+        ):
+            st.caption(
+                "Use the Show rule builder below for a guided experience or paste JSON here for advanced control."
+            )
+            show_if_raw = st.text_area(
+                "Show if (JSON)",
+                value=(
+                    json.dumps(question.get("show_if", {}), indent=2)
+                    if question.get("show_if")
+                    else ""
+                ),
+                placeholder='{"all": [{"field": "previous_question", "operator": "equals", "value": "Yes"}]}',
+                help="JSON logic describing when the question should appear.",
+            )
 
         col_save, col_delete = st.columns([3, 1])
         with col_save:
@@ -853,27 +951,38 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
             delete_requested = st.form_submit_button("Delete question", type="secondary")
 
         if submitted:
-            options = parse_options(options_raw) if question_type in {"single", "multiselect"} else []
+            if question_type in {"single", "multiselect"} and not options:
+                st.error("Add at least one option for selectable question types.")
+                return
+
             show_if = parse_show_if(show_if_raw)
             if show_if_raw and show_if is None:
                 return
 
-            updated_question = {
-                "key": question["key"],
-                "label": label or question["key"],
+            preserved_fields = {
+                existing_key: value
+                for existing_key, value in question.items()
+                if existing_key
+                not in {"key", "label", "type", "help", "placeholder", "options", "show_if"}
+            }
+
+            updated_question: Dict[str, Any] = {
+                **preserved_fields,
+                "key": key,
+                "label": label.strip() or key,
                 "type": question_type,
             }
-            if help_text:
-                updated_question["help"] = help_text
-            if placeholder:
-                updated_question["placeholder"] = placeholder
+            if help_text.strip():
+                updated_question["help"] = help_text.strip()
+            if placeholder.strip():
+                updated_question["placeholder"] = placeholder.strip()
             if options:
                 updated_question["options"] = options
             if show_if:
                 updated_question["show_if"] = show_if
 
             for idx, existing in enumerate(schema.get("questions", [])):
-                if existing.get("key") == question.get("key"):
+                if existing.get("key") == key:
                     schema["questions"][idx] = updated_question
                     break
 
@@ -882,7 +991,7 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
 
         if delete_requested:
             schema["questions"] = [
-                q for q in schema.get("questions", []) if q.get("key") != question.get("key")
+                q for q in schema.get("questions", []) if q.get("key") != key
             ]
             st.session_state[SCHEMA_STATE_KEY] = schema
             st.warning("Question removed. Use Publish or Save as Draft to persist changes.")
@@ -893,11 +1002,37 @@ def render_add_question(schema: Dict[str, Any]) -> None:
 
     st.subheader("Add new question")
     with st.form("add_question"):
-        key = st.text_input("Key")
-        label = st.text_input("Label")
-        question_type = st.selectbox("Type", options=QUESTION_TYPES)
-        options_raw = st.text_area("Options (one per line)")
-        show_if_raw = st.text_area("Show if (JSON)")
+        key = st.text_input(
+            "Key",
+            help="Unique identifier used in the schema. Letters, numbers, and underscores only.",
+        )
+        label = st.text_input(
+            "Question label",
+            help="Displayed to respondents. Leave blank to reuse the key.",
+        )
+        question_type = st.selectbox("Answer type", options=QUESTION_TYPES)
+
+        with st.expander("Guidance and placeholders"):
+            help_text = st.text_area(
+                "Help text",
+                help="Optional supporting text displayed beneath the label.",
+            )
+            placeholder = st.text_input(
+                "Placeholder",
+                help="Appears inside the input when no answer has been provided.",
+            )
+
+        options = render_options_editor("new", question_type, None)
+
+        with st.expander("Visibility conditions"):
+            st.caption(
+                "Use the Show rule builder below for a guided experience or paste JSON here for advanced control."
+            )
+            show_if_raw = st.text_area(
+                "Show if (JSON)",
+                placeholder='{"any": [{"field": "q1", "operator": "equals", "value": "Yes"}]}',
+            )
+
         submitted = st.form_submit_button("Add question")
 
         if submitted:
@@ -907,17 +1042,23 @@ def render_add_question(schema: Dict[str, Any]) -> None:
             if any(question.get("key") == key for question in schema.get("questions", [])):
                 st.error("A question with this key already exists.")
                 return
+            if question_type in {"single", "multiselect"} and not options:
+                st.error("Add at least one option for selectable question types.")
+                return
 
-            options = parse_options(options_raw) if question_type in {"single", "multiselect"} else []
             show_if = parse_show_if(show_if_raw)
             if show_if_raw and show_if is None:
                 return
 
             new_question: Dict[str, Any] = {
                 "key": key,
-                "label": label or key,
+                "label": label.strip() or key,
                 "type": question_type,
             }
+            if help_text.strip():
+                new_question["help"] = help_text.strip()
+            if placeholder.strip():
+                new_question["placeholder"] = placeholder.strip()
             if options:
                 new_question["options"] = options
             if show_if:
@@ -942,6 +1083,9 @@ def main() -> None:
     render_page_content_editor(schema)
     st.divider()
 
+    render_question_overview(questions)
+    st.divider()
+
     with st.expander("Live Preview", expanded=False):
         preview_answers: Dict[str, Any] = st.session_state.setdefault(
             PREVIEW_ANSWERS_STATE_KEY,
@@ -963,8 +1107,20 @@ def main() -> None:
         st.session_state[PREVIEW_ANSWERS_STATE_KEY] = preview_answers
 
     if questions:
-        question_keys = [question["key"] for question in questions]
-        selected_key = st.selectbox("Select a question to edit", question_keys)
+        option_labels = [
+            f"{question.get('label', question.get('key', '')) or question.get('key', '')} · {question.get('key', '')}"
+            for question in questions
+        ]
+        key_lookup = {
+            label: question.get("key")
+            for label, question in zip(option_labels, questions)
+        }
+        selected_label = st.selectbox(
+            "Select a question to edit",
+            option_labels,
+            help="Pick a question from the list above to adjust its settings.",
+        )
+        selected_key = key_lookup.get(selected_label)
         selected_question = next((q for q in questions if q.get("key") == selected_key), None)
         if selected_question:
             render_question_editor(selected_question, schema)
