@@ -79,7 +79,21 @@
         "Biometric identification",
         "Recruitment",
         "Employee management"
-      ]
+      ],
+      "show_if": {
+        "all": [
+          {
+            "field": "use-AI",
+            "operator": "contains_any",
+            "value": [
+              "Biometric categorization",
+              "Biometric identification",
+              "Recruitment",
+              "Employee management"
+            ]
+          }
+        ]
+      }
     }
   ]
 }
