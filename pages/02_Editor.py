@@ -14,6 +14,10 @@ import streamlit as st
 
 from Home import load_schema
 from lib.github_backend import GitHubBackend, create_branch, ensure_pr, put_file
+from lib.questionnaire_utils import (
+    EDITOR_SELECTED_STATE_KEY,
+    normalize_questionnaires,
+)
 from lib.schema_defaults import (
     DEFAULT_DEBUG_LABEL,
     DEFAULT_INTRO_HEADING,
@@ -31,6 +35,22 @@ SCHEMA_SHA_STATE_KEY = "editor_schema_sha"
 DRAFT_BRANCH_STATE_KEY = "editor_draft_branch"
 QUESTION_TYPES = ["single", "multiselect", "bool", "text", "statement"]
 SHOW_IF_BUILDER_STATE_KEY = "editor_show_if_builder"
+
+
+def _active_questionnaire_id(schema: Dict[str, Any]) -> str:
+    """Return the identifier of the questionnaire currently being edited."""
+
+    identifier = schema.get("_active_questionnaire")
+    if isinstance(identifier, str):
+        return identifier
+    return ""
+
+
+def _state_prefix(schema: Dict[str, Any]) -> str:
+    """Return a stable prefix for widget keys based on the active questionnaire."""
+
+    questionnaire_id = _active_questionnaire_id(schema)
+    return "".join(ch if ch.isalnum() else "_" for ch in questionnaire_id)
 
 
 def _rerun_app() -> None:
@@ -329,8 +349,12 @@ def get_schema() -> Dict[str, Any]:
     """Fetch the current schema for editing, caching in session state."""
 
     if SCHEMA_STATE_KEY not in st.session_state:
-        schema = load_schema() or {"questions": []}
+        schema = load_schema() or {}
+        normalize_questionnaires(schema)
         st.session_state[SCHEMA_STATE_KEY] = schema
+    else:
+        schema = st.session_state[SCHEMA_STATE_KEY]
+        normalize_questionnaires(schema)
     if SCHEMA_SHA_STATE_KEY not in st.session_state:
         backend = get_backend()
         if backend is not None:
@@ -339,7 +363,21 @@ def get_schema() -> Dict[str, Any]:
             except Exception as exc:  # pylint: disable=broad-except
                 st.error(f"Could not load schema metadata from GitHub: {exc}")
                 st.session_state[SCHEMA_SHA_STATE_KEY] = None
-    return st.session_state[SCHEMA_STATE_KEY]
+    return schema
+
+
+def schema_for_storage(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a copy of ``schema`` suitable for persistence."""
+
+    storage = deepcopy(schema)
+    questionnaires = normalize_questionnaires(storage)
+    active_id = storage.pop("_active_questionnaire", None)
+    if isinstance(active_id, str) and active_id in questionnaires:
+        questionnaires[active_id]["page"] = storage.get("page", questionnaires[active_id].get("page", {}))
+        questionnaires[active_id]["questions"] = storage.get("questions", questionnaires[active_id].get("questions", []))
+    storage.pop("page", None)
+    storage.pop("questions", None)
+    return storage
 
 
 def verify_password(password: str) -> bool:
@@ -461,10 +499,12 @@ def render_question_overview(questions: Sequence[Dict[str, Any]]) -> None:
 def sync_show_if_builder_state(schema: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     """Ensure the rule builder session state mirrors the current schema."""
 
-    builder_state: Dict[str, Dict[str, Any]] = st.session_state.setdefault(
+    questionnaire_id = _active_questionnaire_id(schema)
+    all_states: Dict[str, Dict[str, Any]] = st.session_state.setdefault(
         SHOW_IF_BUILDER_STATE_KEY,
         {},
     )
+    builder_state = all_states.setdefault(questionnaire_id, {})
     valid_keys = set()
     for question in schema.get("questions", []):
         key = question.get("key")
@@ -516,6 +556,8 @@ def sync_show_if_builder_state(schema: Dict[str, Any]) -> Dict[str, Dict[str, An
         if key not in valid_keys:
             builder_state.pop(key)
 
+    all_states[questionnaire_id] = builder_state
+    st.session_state[SHOW_IF_BUILDER_STATE_KEY] = all_states
     return builder_state
 
 
@@ -736,6 +778,7 @@ def render_show_if_builder(
 ) -> None:
     """Render the guided rule builder UI scoped to a single question."""
 
+    prefix = _state_prefix(schema)
     json_override_key = f"{json_state_key}_override"
 
     questions = schema.get("questions", [])
@@ -814,8 +857,8 @@ def render_show_if_builder(
 
     _sync_question_rule()
 
-    group_selector_key = f"show_if_active_group_{question_key}"
-    pending_selector_key = f"show_if_pending_active_group_{question_key}"
+    group_selector_key = f"show_if_active_group_{prefix}_{question_key}"
+    pending_selector_key = f"show_if_pending_active_group_{prefix}_{question_key}"
     pending_active_group = st.session_state.pop(pending_selector_key, None)
     if pending_active_group is not None:
         st.session_state[group_selector_key] = pending_active_group
@@ -854,7 +897,7 @@ def render_show_if_builder(
         target_state["active_group"] = selected_group_index
 
     add_group_clicked = st.button(
-        "Add rule group", key=f"show_if_add_group_{question_key}", help="Create a new set of conditions for showing this question."
+        "Add rule group", key=f"show_if_add_group_{prefix}_{question_key}", help="Create a new set of conditions for showing this question."
     )
 
     if add_group_clicked:
@@ -875,7 +918,7 @@ def render_show_if_builder(
         return
 
     if len(groups) > 1:
-        combine_key = f"show_if_group_combine_{question_key}"
+        combine_key = f"show_if_group_combine_{prefix}_{question_key}"
         combine_choice = st.radio(
             "Show this question when",
             options=("all", "any"),
@@ -898,7 +941,7 @@ def render_show_if_builder(
 
     label_col, mode_col, remove_col, save_col = st.columns([3, 2, 1, 1])
 
-    group_label_key = f"show_if_group_label_{question_key}_{selected_group_index}"
+    group_label_key = f"show_if_group_label_{prefix}_{question_key}_{selected_group_index}"
     current_label = active_group.get("label", f"Group {selected_group_index + 1}")
     stored_label = st.session_state.get(group_label_key)
     if stored_label != current_label:
@@ -928,7 +971,7 @@ def render_show_if_builder(
                 st.session_state[group_label_key] = sanitized_label
                 _ensure_group_labels(groups)
 
-    group_mode_key = f"show_if_group_mode_{question_key}_{selected_group_index}"
+    group_mode_key = f"show_if_group_mode_{prefix}_{question_key}_{selected_group_index}"
     current_mode = active_group.get("mode", "all")
     if current_mode not in {"all", "any"}:
         current_mode = "all"
@@ -950,7 +993,7 @@ def render_show_if_builder(
         remove_disabled = len(groups) == 0
         remove_clicked = st.button(
             "Delete group",
-            key=f"show_if_remove_group_{question_key}_{selected_group_index}",
+            key=f"show_if_remove_group_{prefix}_{question_key}_{selected_group_index}",
             disabled=remove_disabled,
             help="Remove this group and all of its clauses.",
         )
@@ -972,7 +1015,7 @@ def render_show_if_builder(
     with save_col:
         if st.button(
             "Save changes",
-            key=f"show_if_save_group_{question_key}_{selected_group_index}",
+            key=f"show_if_save_group_{prefix}_{question_key}_{selected_group_index}",
             help="Record updates you've made to this group.",
         ):
             _sync_question_rule()
@@ -1008,7 +1051,7 @@ def render_show_if_builder(
                 if current_field_value and current_field_value not in available_field_options:
                     available_field_options.append(current_field_value)
                 edit_field_key = (
-                    f"show_if_existing_field_{question_key}_{selected_group_index}_{idx}"
+                    f"show_if_existing_field_{prefix}_{question_key}_{selected_group_index}_{idx}"
                 )
                 with edit_field_col:
                     selected_field_value = st.selectbox(
@@ -1032,7 +1075,7 @@ def render_show_if_builder(
                         option for option in operator_options if option != current_operator_value
                     ]
                 edit_operator_key = (
-                    f"show_if_existing_operator_{question_key}_{selected_group_index}_{idx}"
+                    f"show_if_existing_operator_{prefix}_{question_key}_{selected_group_index}_{idx}"
                 )
                 with edit_operator_col:
                     selected_operator_value = st.selectbox(
@@ -1358,7 +1401,7 @@ def render_show_if_builder(
 
     if st.button(
         "Add condition",
-        key=f"show_if_add_clause_{question_key}_{selected_group_index}",
+        key=f"show_if_add_clause_{prefix}_{question_key}_{selected_group_index}",
         help="Append this new condition to the selected group.",
     ):
         if selected_operator != "always" and not clause_field_key:
@@ -1492,11 +1535,13 @@ def should_show_question(question: Dict[str, Any], answers: Dict[str, Any]) -> b
     return eval_rule(show_if, answers)
 
 
-def render_preview_question(question: Dict[str, Any], answers: Dict[str, Any]) -> None:
+def render_preview_question(
+    question: Dict[str, Any], answers: Dict[str, Any], *, prefix: str = ""
+) -> None:
     """Render an individual question widget for the live preview."""
 
     question_key = question["key"]
-    widget_key = f"preview_question_{question_key}"
+    widget_key = f"preview_question_{prefix}_{question_key}" if prefix else f"preview_question_{question_key}"
 
     if not should_show_question(question, answers):
         answers.pop(question_key, None)
@@ -1634,7 +1679,8 @@ def validate_schema(schema: Dict[str, Any]) -> List[str]:
 def handle_save_draft(schema: Dict[str, Any]) -> None:
     """Save the current schema to a draft branch and ensure a PR exists."""
 
-    errors = validate_schema(schema)
+    persistable = schema_for_storage(schema)
+    errors = validate_schema(persistable)
     if errors:
         for error in errors:
             st.error(error)
@@ -1673,7 +1719,7 @@ def handle_save_draft(schema: Dict[str, Any]) -> None:
     try:
         put_file(
             config,
-            schema,
+            persistable,
             sha,
             message=f"chore: save questionnaire draft ({branch})",
             branch=branch,
@@ -1702,7 +1748,8 @@ def handle_save_draft(schema: Dict[str, Any]) -> None:
 def handle_publish(schema: Dict[str, Any]) -> None:
     """Publish the schema to the main branch or save locally if unavailable."""
 
-    errors = validate_schema(schema)
+    persistable = schema_for_storage(schema)
+    errors = validate_schema(persistable)
     if errors:
         for error in errors:
             st.error(error)
@@ -1733,7 +1780,7 @@ def handle_publish(schema: Dict[str, Any]) -> None:
         try:
             response = put_file(
                 config,
-                schema,
+                persistable,
                 latest_sha,
                 message="chore: publish questionnaire schema",
                 branch=config.get("branch", "main"),
@@ -1750,7 +1797,7 @@ def handle_publish(schema: Dict[str, Any]) -> None:
     else:
         try:
             with open("form_schema.json", "w", encoding="utf-8") as schema_file:
-                json.dump(schema, schema_file, indent=2)
+                json.dump(persistable, schema_file, indent=2)
         except OSError as exc:
             st.error(f"Could not save schema locally: {exc}")
             return
@@ -1767,7 +1814,8 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
     """Render the editor form for a single question."""
 
     original_key = question.get("key", "")
-    show_if_json_key = f"show_if_json_{original_key}"
+    prefix = _state_prefix(schema)
+    show_if_json_key = f"show_if_json_{prefix}_{original_key}" if prefix else f"show_if_json_{original_key}"
     show_if_json_override_key = f"{show_if_json_key}_override"
     initial_show_if = (
         json.dumps(question.get("show_if", {}), indent=2)
@@ -1782,7 +1830,8 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
             show_if_json_override_key
         )
 
-    with st.form(f"edit_{original_key}"):
+    form_key = f"edit_{prefix}_{original_key}" if prefix else f"edit_{original_key}"
+    with st.form(form_key):
         st.subheader(f"Edit question: {question.get('label', original_key)}")
 
         key_input = st.text_input(
@@ -1826,7 +1875,11 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
                 help="Appears inside the input when no answer has been provided.",
             )
 
-        options = render_options_editor(original_key, question_type, question.get("options"))
+        options = render_options_editor(
+            f"{prefix}_{original_key}" if prefix else original_key,
+            question_type,
+            question.get("options"),
+        )
 
         with st.expander(
             "Visibility conditions",
@@ -1900,27 +1953,46 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
                     break
 
             if new_key != original_key:
-                preview_answers = st.session_state.get(PREVIEW_ANSWERS_STATE_KEY)
-                if isinstance(preview_answers, dict) and original_key in preview_answers:
-                    preview_answers[new_key] = preview_answers.pop(original_key)
-                    st.session_state[PREVIEW_ANSWERS_STATE_KEY] = preview_answers
+                preview_state = st.session_state.get(PREVIEW_ANSWERS_STATE_KEY)
+                active_id = _active_questionnaire_id(schema)
+                if isinstance(preview_state, dict):
+                    answers = preview_state.get(active_id)
+                    if isinstance(answers, dict) and original_key in answers:
+                        answers[new_key] = answers.pop(original_key)
+                        preview_state[active_id] = answers
+                        st.session_state[PREVIEW_ANSWERS_STATE_KEY] = preview_state
 
-                preview_widget_key = f"preview_question_{original_key}"
+                preview_widget_key = (
+                    f"preview_question_{prefix}_{original_key}"
+                    if prefix
+                    else f"preview_question_{original_key}"
+                )
                 if preview_widget_key in st.session_state:
                     st.session_state.pop(preview_widget_key)
 
                 builder_state = st.session_state.get(SHOW_IF_BUILDER_STATE_KEY)
-                if isinstance(builder_state, dict) and original_key in builder_state:
-                    builder_state[new_key] = builder_state.pop(original_key)
-                    st.session_state[SHOW_IF_BUILDER_STATE_KEY] = builder_state
+                active_id = _active_questionnaire_id(schema)
+                if isinstance(builder_state, dict):
+                    questionnaire_state = builder_state.get(active_id)
+                    if isinstance(questionnaire_state, dict) and original_key in questionnaire_state:
+                        questionnaire_state[new_key] = questionnaire_state.pop(original_key)
+                        builder_state[active_id] = questionnaire_state
+                        st.session_state[SHOW_IF_BUILDER_STATE_KEY] = builder_state
 
+                target_suffix = (
+                    f"_{prefix}_{original_key}" if prefix else f"_{original_key}"
+                )
                 for session_key in list(st.session_state.keys()):
-                    if session_key.startswith("show_if_") and session_key.endswith(f"_{original_key}"):
+                    if session_key.startswith("show_if_") and session_key.endswith(target_suffix):
                         st.session_state.pop(session_key)
 
                 _rename_show_if_fields(schema, original_key, new_key)
 
-                new_show_if_json_key = f"show_if_json_{new_key}"
+                new_show_if_json_key = (
+                    f"show_if_json_{prefix}_{new_key}"
+                    if prefix
+                    else f"show_if_json_{new_key}"
+                )
                 st.session_state[new_show_if_json_key] = st.session_state.pop(
                     show_if_json_key,
                     json.dumps(question.get("show_if", {}), indent=2)
@@ -1937,6 +2009,27 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
             schema["questions"] = [
                 q for q in schema.get("questions", []) if q.get("key") != original_key
             ]
+            preview_state = st.session_state.get(PREVIEW_ANSWERS_STATE_KEY)
+            active_id = _active_questionnaire_id(schema)
+            if isinstance(preview_state, dict):
+                answers = preview_state.get(active_id)
+                if isinstance(answers, dict) and original_key in answers:
+                    answers.pop(original_key, None)
+                    preview_state[active_id] = answers
+                    st.session_state[PREVIEW_ANSWERS_STATE_KEY] = preview_state
+            builder_state = st.session_state.get(SHOW_IF_BUILDER_STATE_KEY)
+            if isinstance(builder_state, dict):
+                questionnaire_state = builder_state.get(active_id)
+                if isinstance(questionnaire_state, dict) and original_key in questionnaire_state:
+                    questionnaire_state.pop(original_key, None)
+                    builder_state[active_id] = questionnaire_state
+                    st.session_state[SHOW_IF_BUILDER_STATE_KEY] = builder_state
+            target_suffix = (
+                f"_{prefix}_{original_key}" if prefix else f"_{original_key}"
+            )
+            for session_key in list(st.session_state.keys()):
+                if session_key.endswith(target_suffix):
+                    st.session_state.pop(session_key)
             st.session_state[SCHEMA_STATE_KEY] = schema
             st.warning("Question removed. Use Publish or Save as Draft to persist changes.")
 
@@ -1948,7 +2041,9 @@ def render_add_question(schema: Dict[str, Any]) -> None:
     """Render the form to create a new question."""
 
     st.subheader("Add new question")
-    with st.form("add_question"):
+    prefix = _state_prefix(schema)
+    form_key = f"add_question_{prefix}" if prefix else "add_question"
+    with st.form(form_key):
         key = st.text_input(
             "Key",
             help="Unique identifier used in the schema. Letters, numbers, and underscores only.",
@@ -1969,7 +2064,9 @@ def render_add_question(schema: Dict[str, Any]) -> None:
                 help="Appears inside the input when no answer has been provided.",
             )
 
-        options = render_options_editor("new", question_type, None)
+        options = render_options_editor(
+            f"{prefix}_new" if prefix else "new", question_type, None
+        )
 
         with st.expander("Visibility conditions"):
             st.caption(
@@ -2025,6 +2122,31 @@ def main() -> None:
     st.caption("Authentication is assumed to have already succeeded.")
 
     schema = get_schema()
+    questionnaires = schema.get("questionnaires", {})
+    if not questionnaires:
+        st.error("No questionnaires configured. Use the runner to add a definition.")
+        return
+
+    questionnaire_keys = list(questionnaires.keys())
+    selected_key = st.session_state.get(EDITOR_SELECTED_STATE_KEY)
+    if selected_key not in questionnaire_keys:
+        selected_key = questionnaire_keys[0]
+    if len(questionnaire_keys) > 1:
+        selected_key = st.selectbox(
+            "Select questionnaire",
+            options=questionnaire_keys,
+            index=questionnaire_keys.index(selected_key),
+            format_func=lambda key: questionnaires[key].get("label", key),
+            help="Choose which questionnaire to edit.",
+        )
+    else:
+        st.caption(f"Editing questionnaire: {questionnaires[selected_key].get('label', selected_key)}")
+
+    st.session_state[EDITOR_SELECTED_STATE_KEY] = selected_key
+    schema["_active_questionnaire"] = selected_key
+    selected_questionnaire = questionnaires[selected_key]
+    schema["page"] = selected_questionnaire.setdefault("page", {})
+    schema["questions"] = selected_questionnaire.setdefault("questions", [])
     questions = schema.get("questions", [])
 
     render_page_content_editor(schema)
@@ -2034,10 +2156,11 @@ def main() -> None:
     st.divider()
 
     with st.expander("Live Preview", expanded=False):
-        preview_answers: Dict[str, Any] = st.session_state.setdefault(
+        preview_state: Dict[str, Dict[str, Any]] = st.session_state.setdefault(
             PREVIEW_ANSWERS_STATE_KEY,
             {},
         )
+        preview_answers = preview_state.setdefault(selected_key, {})
         if not questions:
             st.info("Add questions to see the live preview.")
         else:
@@ -2046,12 +2169,13 @@ def main() -> None:
             )
             active_keys = set()
             for question in questions:
-                render_preview_question(question, preview_answers)
+                render_preview_question(question, preview_answers, prefix=_state_prefix(schema))
                 active_keys.add(question.get("key"))
             for key in list(preview_answers.keys()):
                 if key not in active_keys:
                     preview_answers.pop(key, None)
-        st.session_state[PREVIEW_ANSWERS_STATE_KEY] = preview_answers
+        preview_state[selected_key] = preview_answers
+        st.session_state[PREVIEW_ANSWERS_STATE_KEY] = preview_state
 
     if questions:
         option_labels = [
@@ -2077,7 +2201,7 @@ def main() -> None:
     render_add_question(schema)
 
     with st.expander("View raw schema"):
-        st.json(schema)
+        st.json(schema_for_storage(schema))
 
     st.divider()
     st.subheader("Save changes")

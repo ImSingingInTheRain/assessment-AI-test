@@ -2,11 +2,17 @@
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List, Tuple
 
 import streamlit as st
 
 SCHEMA_PATH = Path("form_schema.json")
+
+from lib.questionnaire_utils import (
+    RUNNER_SELECTED_STATE_KEY,
+    iter_questionnaires,
+    normalize_questionnaires,
+)
 
 
 @st.cache_data(show_spinner=False)
@@ -19,17 +25,25 @@ def load_schema() -> Dict[str, Any]:
         return json.load(schema_file)
 
 
-def render_question_summary(questions: List[Dict[str, Any]]) -> None:
-    """Render a summary list of questions available in the schema."""
+def render_question_summary(questionnaires: Iterable[Tuple[str, Dict[str, Any]]]) -> None:
+    """Render a summary of the available questionnaires and their questions."""
 
-    for question in questions:
+    for questionnaire_key, questionnaire in questionnaires:
+        questions: List[Dict[str, Any]] = questionnaire.get("questions", [])
+        label = questionnaire.get("label", questionnaire_key)
         with st.container():
-            st.subheader(question.get("label", "Untitled question"))
-            st.caption(f"Key: {question.get('key', 'n/a')}")
-            st.write(f"Type: {question.get('type', 'unknown')}")
-            if show_if := question.get("show_if"):
-                st.write("Show rule:")
-                st.code(json.dumps(show_if, indent=2), language="json")
+            st.markdown(f"### {label}")
+            if not questions:
+                st.caption("No questions configured yet.")
+                continue
+            for question in questions:
+                st.markdown(
+                    f"**{question.get('label', 'Untitled question')}**  "
+                    f"Key: `{question.get('key', 'n/a')}`  ·  "
+                    f"Type: `{question.get('type', 'unknown')}`"
+                )
+                if show_if := question.get("show_if"):
+                    st.code(json.dumps(show_if, indent=2), language="json")
 
 
 def render_launch_checklist() -> None:
@@ -64,10 +78,6 @@ def main() -> None:
         "launch checklist to get your workflow ready."
     )
 
-    st.subheader("Jump into the app")
-    st.page_link("pages/01_Questionnaire.py", label="Questionnaire", icon="🧾")
-    st.page_link("pages/02_Editor.py", label="Editor", icon="🛠️")
-
     render_launch_checklist()
 
     st.subheader("Schema health")
@@ -84,15 +94,61 @@ def main() -> None:
         schema_status.warning("Schema file not found. Add form_schema.json to continue.")
         return
 
-    questions: List[Dict[str, Any]] = schema.get("questions", [])
-    schema_status.success(f"Schema loaded with {len(questions)} question(s).")
+    questionnaires = normalize_questionnaires(schema)
+    total_questions = sum(len(entry.get("questions", [])) for entry in questionnaires.values())
+    schema_status.success(
+        f"Schema loaded with {len(questionnaires)} questionnaire(s) and {total_questions} question(s)."
+    )
 
     meta_col, version_col = st.columns(2)
     meta_col.metric("Title", schema.get("title", "—"))
     version_col.metric("Version", schema.get("version", "—"))
 
+    st.subheader("Choose where to start")
+    choice_options = [
+        (key, entry.get("label", key), len(entry.get("questions", [])))
+        for key, entry in questionnaires.items()
+    ]
+
+    if not choice_options:
+        st.info("No questionnaires configured yet. Use the editor to add one.")
+    else:
+        option_labels = [
+            f"{label} ({count} question{'s' if count != 1 else ''})"
+            for _, label, count in choice_options
+        ]
+        selected_index = 0
+        initial_selection = st.session_state.get(RUNNER_SELECTED_STATE_KEY)
+        if initial_selection:
+            for idx, (key, _, _) in enumerate(choice_options):
+                if key == initial_selection:
+                    selected_index = idx
+                    break
+        selection = st.selectbox(
+            "Questionnaire",
+            options=option_labels,
+            index=selected_index,
+            help="Select which questionnaire to open in the runner.",
+        )
+        selected_key = choice_options[option_labels.index(selection)][0]
+        st.session_state[RUNNER_SELECTED_STATE_KEY] = selected_key
+
+        def _switch_to_questionnaire() -> None:
+            if hasattr(st, "switch_page"):
+                st.switch_page("pages/01_Questionnaire.py")
+            else:
+                st.info(
+                    "Use the navigation menu to open the Questionnaire page. "
+                    "Your selection will be remembered."
+                )
+
+        if st.button("Start questionnaire", type="primary"):
+            _switch_to_questionnaire()
+
+    st.page_link("pages/02_Editor.py", label="Open editor", icon="🛠️")
+
     with st.expander("Question overview", expanded=False):
-        render_question_summary(questions)
+        render_question_summary(iter_questionnaires(schema))
 
 
 if __name__ == "__main__":

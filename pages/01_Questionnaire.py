@@ -12,6 +12,11 @@ import requests
 import streamlit as st
 
 from Home import load_schema
+from lib.questionnaire_utils import (
+    DEFAULT_QUESTIONNAIRE_KEY,
+    RUNNER_SELECTED_STATE_KEY,
+    normalize_questionnaires,
+)
 from lib.schema_defaults import (
     DEFAULT_DEBUG_LABEL,
     DEFAULT_INTRO_HEADING,
@@ -94,7 +99,8 @@ def load_schema_from_github() -> Dict[str, Any]:
     contents = get_file(config)
     return json.loads(contents)
 
-ANSWERS_STATE_KEY = "answers"
+ANSWERS_STATE_KEY = "questionnaire_answers"
+QUESTIONNAIRE_QUERY_PARAM = "questionnaire"
 
 
 def _normalise_paragraphs(value: Any) -> List[str]:
@@ -196,13 +202,38 @@ def should_show_question(question: Dict[str, Any], answers: Dict[str, Any]) -> b
     return eval_rule(show_if, answers)
 
 
+def _get_query_param(name: str) -> Optional[str]:
+    """Return the first query parameter value if present."""
+
+    params = st.experimental_get_query_params()
+    values = params.get(name)
+    if not values:
+        return None
+    if isinstance(values, list):
+        return next((str(value) for value in values if value is not None), None)
+    return str(values)
+
+
+def _set_query_param(name: str, value: str) -> None:
+    """Persist ``value`` in the query string under ``name``."""
+
+    params = st.experimental_get_query_params()
+    params[name] = value
+    st.experimental_set_query_params(**params)
+
+
 def render_question(
-    question: Dict[str, Any], answers: Dict[str, Any], *, index: int, total: int
+    questionnaire_key: str,
+    question: Dict[str, Any],
+    answers: Dict[str, Any],
+    *,
+    index: int,
+    total: int,
 ) -> None:
     """Render an individual question widget."""
 
     question_key = question["key"]
-    widget_key = f"question_{question_key}"
+    widget_key = f"{questionnaire_key}_question_{question_key}"
 
     if not should_show_question(question, answers):
         answers.pop(question_key, None)
@@ -382,8 +413,39 @@ def main() -> None:
         st.error("Schema failed to load. Please check form_schema.json.")
         return
 
-    page_settings = schema.get("page") if isinstance(schema.get("page"), dict) else {}
-    st.title(str(page_settings.get("title")) or DEFAULT_PAGE_TITLE)
+    questionnaires = normalize_questionnaires(schema)
+    if not questionnaires:
+        st.error("No questionnaires configured. Use the editor to add one.")
+        return
+
+    initial_selection = _get_query_param(QUESTIONNAIRE_QUERY_PARAM)
+    if not initial_selection:
+        initial_selection = st.session_state.get(RUNNER_SELECTED_STATE_KEY)
+    if not initial_selection or initial_selection not in questionnaires:
+        initial_selection = next(iter(questionnaires))
+
+    questionnaire_keys = list(questionnaires.keys())
+    selected_key = initial_selection
+    if len(questionnaire_keys) > 1:
+        selected_index = questionnaire_keys.index(selected_key)
+        selected_key = st.selectbox(
+            "Questionnaire",
+            options=questionnaire_keys,
+            index=selected_index,
+            format_func=lambda key: questionnaires[key].get("label", key),
+            help="Choose which questionnaire to complete.",
+        )
+
+    st.session_state[RUNNER_SELECTED_STATE_KEY] = selected_key
+    if _get_query_param(QUESTIONNAIRE_QUERY_PARAM) != selected_key:
+        _set_query_param(QUESTIONNAIRE_QUERY_PARAM, selected_key)
+
+    selected_questionnaire = questionnaires[selected_key]
+    page_settings = selected_questionnaire.get("page", {})
+    page_title = str(page_settings.get("title") or "")
+    if not page_title:
+        page_title = selected_questionnaire.get("label", DEFAULT_PAGE_TITLE)
+    st.title(page_title or DEFAULT_PAGE_TITLE)
 
     show_introduction = page_settings.get("show_introduction")
     if show_introduction is None:
@@ -413,17 +475,25 @@ def main() -> None:
         intro_parts.append("</div>")
         st.markdown("\n".join(intro_parts), unsafe_allow_html=True)
 
-    questions = schema.get("questions", [])
+    questions = selected_questionnaire.get("questions", [])
     if not questions:
         st.info("No questions defined in the schema yet.")
         return
 
-    answers: Dict[str, Any] = st.session_state.setdefault(ANSWERS_STATE_KEY, {})
+    answers_state: Dict[str, Dict[str, Any]] = st.session_state.setdefault(ANSWERS_STATE_KEY, {})
+    answers = answers_state.setdefault(selected_key, {})
 
     for idx, question in enumerate(questions):
-        render_question(question, answers, index=idx, total=len(questions))
+        render_question(
+            selected_key,
+            question,
+            answers,
+            index=idx,
+            total=len(questions),
+        )
 
-    st.session_state[ANSWERS_STATE_KEY] = answers
+    answers_state[selected_key] = answers
+    st.session_state[ANSWERS_STATE_KEY] = answers_state
 
     submit_settings = (
         page_settings.get("submit")
@@ -459,9 +529,9 @@ def main() -> None:
             else DEFAULT_DEBUG_LABEL
         )
         with st.expander(debug_label, expanded=False):
-            st.json(st.session_state[ANSWERS_STATE_KEY])
+            st.json(answers)
 
-    if st.button(submit_label):
+    if st.button(submit_label, key=f"submit_{selected_key}"):
         st.success(submit_success_message)
         if show_answers_summary:
             st.json(answers)
