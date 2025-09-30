@@ -160,6 +160,11 @@
       "label": "Select system",
       "type": "related_record",
       "related_record_source": "system_registration"
+    },
+    {
+      "key": "name",
+      "label": "assign a name to your assessment",
+      "type": "record_name"
     }
   ],
   "meta": {
