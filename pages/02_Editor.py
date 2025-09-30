@@ -33,6 +33,16 @@ QUESTION_TYPES = ["single", "multiselect", "bool", "text", "statement"]
 SHOW_IF_BUILDER_STATE_KEY = "editor_show_if_builder"
 
 
+def _rerun_app() -> None:
+    """Trigger a Streamlit rerun using the available API."""
+
+    if hasattr(st, "rerun"):
+        st.rerun()
+    elif hasattr(st, "experimental_rerun"):
+        st.experimental_rerun()
+
+
+
 def _is_clause_rule(value: Any) -> bool:
     """Return ``True`` if ``value`` represents a terminal rule clause."""
 
@@ -755,7 +765,7 @@ def render_show_if_builder(
         st.session_state[group_selector_key] = new_index
         _sync_question_rule()
         st.success("Group added.")
-        st.experimental_rerun()
+        _rerun_app()
 
     with selector_col:
         selected_group_index = st.selectbox(
@@ -840,7 +850,7 @@ def render_show_if_builder(
                 st.session_state[group_selector_key] = new_index
                 _sync_question_rule()
                 st.success("Group removed.")
-                st.experimental_rerun()
+                _rerun_app()
 
     active_group.setdefault("clauses", [])
 
@@ -1027,7 +1037,7 @@ def render_show_if_builder(
                 if st.button("Remove", key=f"remove_clause_{question_key}_{selected_group_index}_{idx}"):
                     active_group["clauses"].pop(idx)
                     _sync_question_rule()
-                    st.experimental_rerun()
+                    _rerun_app()
 
     clear_col, _ = st.columns([1, 3])
     with clear_col:
@@ -1039,7 +1049,7 @@ def render_show_if_builder(
             target_state["active_group"] = 0
             _sync_question_rule()
             st.success("Show rule cleared.")
-            st.experimental_rerun()
+            _rerun_app()
 
     if target_question.get("show_if"):
         st.markdown("**Current rule JSON**")
