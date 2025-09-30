@@ -353,6 +353,19 @@ def eval_clause(clause: Dict[str, Any], answers: Dict[str, Any]) -> bool:
         if not isinstance(expected, Sequence) or isinstance(expected, str):
             return False
         return any(item in value for item in expected)
+    if operator == "contains_any":
+        if expected is None:
+            return False
+        if isinstance(expected, Sequence) and not isinstance(expected, str):
+            expected_values = list(expected)
+        else:
+            expected_values = [expected]
+
+        if isinstance(value, str):
+            return any(isinstance(item, str) and item in value for item in expected_values)
+        if isinstance(value, Sequence) and not isinstance(value, str):
+            return any(item in value for item in expected_values)
+        return False
     if operator == "all_selected":
         if not isinstance(value, Sequence) or isinstance(value, str):
             return False
