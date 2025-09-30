@@ -12,6 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+import pandas as pd
 import streamlit as st
 
 from lib import questionnaire_utils
@@ -22,6 +23,7 @@ RECORD_NAME_KEY = getattr(questionnaire_utils, "RECORD_NAME_KEY", "record_name")
 SUBMISSIONS_DIR = Path("assessment/submissions")
 DEFAULT_TABLE_COLUMNS = ("Submission ID", "Submitted at", "Questionnaire")
 SUBMISSION_ID_PARAM = "submission_id"
+MANAGED_SUBMISSION_KEY = "assessment_managed_submission_id"
 
 
 def _parse_timestamp(value: Any) -> Tuple[str, float]:
@@ -112,6 +114,87 @@ def _strip_private_keys(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any
     return cleaned
 
 
+def _format_editor_value(value: Any) -> str:
+    """Return ``value`` formatted for display in the visual editor."""
+
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list, bool, int, float)):
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except TypeError:
+            return str(value)
+    return str(value)
+
+
+def _parse_editor_value(value: Any) -> Any:
+    """Return the Python value represented by ``value`` from the editor."""
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return ""
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            return stripped
+    return value
+
+
+def _prepare_answers_dataframe(answers: Dict[str, Any]) -> pd.DataFrame:
+    """Return a dataframe representing ``answers`` for the editor."""
+
+    rows = [
+        {"Question": str(key), "Answer": _format_editor_value(value)}
+        for key, value in answers.items()
+    ]
+    if not rows:
+        rows = [{"Question": "", "Answer": ""}]
+    return pd.DataFrame(rows, columns=["Question", "Answer"])
+
+
+def _answers_from_dataframe(data: pd.DataFrame) -> Dict[str, Any]:
+    """Convert the edited answers dataframe back to a dictionary."""
+
+    updated: Dict[str, Any] = {}
+    if data is None:
+        return updated
+    for _, row in data.iterrows():
+        key = str(row.get("Question") or "").strip()
+        if not key:
+            continue
+        updated[key] = _parse_editor_value(row.get("Answer"))
+    return updated
+
+
+def _prepare_metadata_dataframe(payload: Dict[str, Any]) -> pd.DataFrame:
+    """Return editable metadata rows for ``payload`` excluding known keys."""
+
+    known_keys = {"id", "questionnaire_key", "submitted_at", "answers", RECORD_NAME_KEY}
+    rows = [
+        {"Field": str(key), "Value": _format_editor_value(payload[key])}
+        for key in payload
+        if key not in known_keys
+    ]
+    if not rows:
+        rows = [{"Field": "", "Value": ""}]
+    return pd.DataFrame(rows, columns=["Field", "Value"])
+
+
+def _metadata_from_dataframe(data: pd.DataFrame) -> Dict[str, Any]:
+    """Return a mapping extracted from the edited metadata dataframe."""
+
+    values: Dict[str, Any] = {}
+    if data is None:
+        return values
+    for _, row in data.iterrows():
+        field = str(row.get("Field") or "").strip()
+        if not field:
+            continue
+        values[field] = _parse_editor_value(row.get("Value"))
+    return values
+
+
 def _format_option(record: Optional[Dict[str, Any]]) -> str:
     """Return a human-friendly label for the submission selection."""
 
@@ -196,115 +279,208 @@ else:
     col2.metric("Questionnaires", len(unique_questionnaires) or "—")
     col3.metric("Most recent submission", most_recent or "—")
 
+    records_by_id = {str(record.get("Submission ID")): record for record in submissions}
+
     columns = _table_columns(submissions)
     table_rows = _strip_private_keys(submissions)
+
+    managed_id = st.session_state.get(MANAGED_SUBMISSION_KEY)
+    preselected = _get_query_param(SUBMISSION_ID_PARAM)
+    if preselected and preselected in records_by_id:
+        managed_id = preselected
+        st.session_state[MANAGED_SUBMISSION_KEY] = preselected
+    elif preselected and preselected not in records_by_id:
+        _set_query_param(SUBMISSION_ID_PARAM, None)
+    if managed_id and managed_id not in records_by_id:
+        st.session_state.pop(MANAGED_SUBMISSION_KEY, None)
+        managed_id = None
+
+    table_df = pd.DataFrame(table_rows, columns=columns)
+    if "Select" not in table_df.columns:
+        table_df.insert(0, "Select", False)
+    else:
+        table_df["Select"] = False
+    if managed_id:
+        table_df.loc[table_df["Submission ID"] == managed_id, "Select"] = True
+
     with st.container():
         st.markdown("<div class='app-card app-card--table'>", unsafe_allow_html=True)
-        st.dataframe(
-            table_rows,
-            width="stretch",
+        edited_df = st.data_editor(
+            table_df,
             hide_index=True,
-            column_order=columns,
+            column_order=["Select", *columns],
+            width="stretch",
+            num_rows="fixed",
+            key="assessment_submissions_table",
+            column_config={
+                "Select": st.column_config.CheckboxColumn(
+                    "Select",
+                    help="Choose a submission to manage.",
+                ),
+                **{
+                    column: st.column_config.Column(column, disabled=True)
+                    for column in columns
+                },
+            },
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-    options: List[Optional[Dict[str, Any]]] = [None] + submissions
-    default_index = 0
-    preselected = _get_query_param(SUBMISSION_ID_PARAM)
-    if preselected:
-        for idx, record in enumerate(submissions, start=1):
-            if str(record.get("Submission ID")) == preselected:
-                default_index = idx
-                break
+    selected_rows = edited_df.loc[edited_df["Select"].astype(bool)] if not edited_df.empty else edited_df
+    candidate_id: Optional[str] = None
+    if not selected_rows.empty:
+        if len(selected_rows) > 1:
+            st.warning("Select only one submission to manage at a time.")
+        else:
+            candidate_id = str(selected_rows.iloc[0]["Submission ID"])
 
-    selected = st.selectbox(
-        "Manage submission",
-        options,
-        index=default_index,
-        format_func=_format_option,
-        key="assessment_submission_selector",
-    )
+    if candidate_id:
+        if candidate_id == managed_id:
+            st.info("You are currently viewing the selected submission.")
+        else:
+            if st.button("Manage selected submission", type="primary"):
+                st.session_state[MANAGED_SUBMISSION_KEY] = candidate_id
+                _set_query_param(SUBMISSION_ID_PARAM, candidate_id)
+                managed_id = candidate_id
+                st.success("Submission ready to manage below.")
 
-    if selected:
-        submission_id = str(selected.get("Submission ID"))
-        _set_query_param(SUBMISSION_ID_PARAM, submission_id)
-        st.subheader("Submission details")
-        st.write(
-            f"**Submission ID:** `{submission_id}`  ",
-            f"**Questionnaire:** {selected.get('Questionnaire') or '—'}  ",
-            f"**Submitted at:** {selected.get('Submitted at') or '—'}",
-        )
+    if managed_id:
+        selected = records_by_id.get(managed_id)
+        if not selected:
+            st.info("The selected submission is no longer available.")
+            st.session_state.pop(MANAGED_SUBMISSION_KEY, None)
+            _set_query_param(SUBMISSION_ID_PARAM, None)
+        else:
+            submission_id = str(selected.get("Submission ID"))
+            st.subheader("Submission details")
+            st.write(
+                f"**Submission ID:** `{submission_id}`  ",
+                f"**Questionnaire:** {selected.get('Questionnaire') or '—'}  ",
+                f"**Submitted at:** {selected.get('Submitted at') or '—'}",
+            )
 
-        payload = selected.get("_raw_payload", {})
-        if isinstance(payload, dict):
-            st.markdown("**Stored payload**")
-            st.json(payload)
+            payload = selected.get("_raw_payload", {})
+            if not isinstance(payload, dict):
+                st.error("Submission payload is not a JSON object and cannot be edited visually.")
+                return
 
-        default_text = json.dumps(payload, indent=2, sort_keys=True)
-        editor_key = f"assessment_submission_editor::{submission_id}"
-        widget_key = f"assessment_submission_text::{submission_id}"
-        if editor_key not in st.session_state:
-            st.session_state[editor_key] = default_text
-        edited_text = st.text_area(
-            "Edit submission JSON",
-            value=st.session_state[editor_key],
-            height=300,
-            key=widget_key,
-        )
-        st.session_state[editor_key] = edited_text
+            answers = payload.get("answers", {})
+            if not isinstance(answers, dict):
+                answers = {}
 
-        col_save, col_delete = st.columns([3, 1])
-        with col_save:
-            if st.button("Save changes", type="primary", key=f"assessment_save::{submission_id}"):
-                try:
-                    updated_payload = json.loads(edited_text)
-                except json.JSONDecodeError as exc:
-                    st.error(f"Invalid JSON: {exc}.")
+            answers_df = _prepare_answers_dataframe(answers)
+            metadata_df = _prepare_metadata_dataframe(payload)
+
+            form_key = f"assessment_submission_form::{submission_id}"
+            answers_key = f"assessment_answers_editor::{submission_id}"
+            metadata_key = f"assessment_metadata_editor::{submission_id}"
+
+            with st.form(form_key):
+                questionnaire_value = st.text_input(
+                    "Questionnaire key",
+                    value=str(payload.get("questionnaire_key") or ""),
+                )
+                submitted_value = st.text_input(
+                    "Submitted at",
+                    value=str(payload.get("submitted_at") or ""),
+                    help="Use ISO 8601 format when updating timestamps.",
+                )
+                record_name_value = st.text_input(
+                    "Record name",
+                    value=str(payload.get(RECORD_NAME_KEY) or ""),
+                )
+
+                st.markdown("**Answers**")
+                edited_answers = st.data_editor(
+                    answers_df,
+                    hide_index=True,
+                    num_rows="dynamic",
+                    width="stretch",
+                    key=answers_key,
+                    column_config={
+                        "Question": st.column_config.TextColumn("Question", required=True),
+                        "Answer": st.column_config.TextColumn(
+                            "Answer",
+                            help="Provide values as text or JSON."
+                        ),
+                    },
+                )
+
+                st.markdown("**Additional fields**")
+                edited_metadata = st.data_editor(
+                    metadata_df,
+                    hide_index=True,
+                    num_rows="dynamic",
+                    width="stretch",
+                    key=metadata_key,
+                    column_config={
+                        "Field": st.column_config.TextColumn("Field", required=True),
+                        "Value": st.column_config.TextColumn(
+                            "Value",
+                            help="Provide values as text or JSON."
+                        ),
+                    },
+                )
+
+                save_clicked = st.form_submit_button("Save changes", type="primary")
+
+            if save_clicked:
+                updated_payload = dict(payload)
+                updated_payload["questionnaire_key"] = questionnaire_value.strip()
+                if submitted_value.strip():
+                    updated_payload["submitted_at"] = submitted_value.strip()
                 else:
-                    if not isinstance(updated_payload, dict):
-                        st.error("Submission data must be a JSON object.")
-                    else:
-                        current_id = str(updated_payload.get("id") or "").strip()
-                        if current_id and current_id != submission_id:
-                            st.error(
-                                "The submission ID inside the JSON must match the filename. "
-                                "Please keep the original ID."
-                            )
+                    updated_payload.pop("submitted_at", None)
+                record_name_clean = record_name_value.strip()
+                if record_name_clean:
+                    updated_payload[RECORD_NAME_KEY] = record_name_clean
+                else:
+                    updated_payload.pop(RECORD_NAME_KEY, None)
+
+                updated_payload["answers"] = _answers_from_dataframe(edited_answers)
+
+                for key in list(updated_payload.keys()):
+                    if key not in {"id", "questionnaire_key", "submitted_at", "answers", RECORD_NAME_KEY}:
+                        updated_payload.pop(key)
+                for key, value in _metadata_from_dataframe(edited_metadata).items():
+                    updated_payload[key] = value
+
+                updated_payload.setdefault("id", submission_id)
+                current_id = str(updated_payload.get("id") or "").strip()
+                if current_id != submission_id:
+                    st.error("The submission ID inside the payload must match the stored filename.")
+                else:
+                    path = selected.get("_path")
+                    if isinstance(path, Path):
+                        try:
+                            with path.open("w", encoding="utf-8") as handle:
+                                json.dump(updated_payload, handle, indent=2)
+                                handle.write("\n")
+                        except OSError as exc:
+                            st.error(f"Failed to save submission: {exc}.")
                         else:
-                            updated_payload.setdefault("id", submission_id)
-                            path = selected.get("_path")
-                            if isinstance(path, Path):
-                                try:
-                                    with path.open("w", encoding="utf-8") as handle:
-                                        json.dump(updated_payload, handle, indent=2)
-                                        handle.write("\n")
-                                except OSError as exc:
-                                    st.error(f"Failed to save submission: {exc}.")
-                                else:
-                                    st.success("Submission updated successfully.")
-                                    st.session_state.pop(editor_key, None)
-                                    st.session_state.pop(widget_key, None)
-                                    _rerun()
-                            else:
-                                st.error("Unable to determine the submission file path.")
-
-        with col_delete:
-            if st.button(
-                "Delete", type="secondary", key=f"assessment_delete::{submission_id}"
-            ):
-                path = selected.get("_path")
-                if isinstance(path, Path):
-                    try:
-                        path.unlink()
-                    except OSError as exc:
-                        st.error(f"Failed to delete submission: {exc}.")
+                            st.success("Submission updated successfully.")
+                            _rerun()
                     else:
-                        st.success("Submission deleted successfully.")
-                        st.session_state.pop(editor_key, None)
-                        st.session_state.pop(widget_key, None)
-                        _set_query_param(SUBMISSION_ID_PARAM, None)
-                        _rerun()
-                else:
-                    st.error("Unable to determine the submission file path.")
+                        st.error("Unable to determine the submission file path.")
+
+            col_delete = st.columns([1, 3])[0]
+            with col_delete:
+                if st.button("Delete submission", type="secondary"):
+                    path = selected.get("_path")
+                    if isinstance(path, Path):
+                        try:
+                            path.unlink()
+                        except OSError as exc:
+                            st.error(f"Failed to delete submission: {exc}.")
+                        else:
+                            st.success("Submission deleted successfully.")
+                            st.session_state.pop(MANAGED_SUBMISSION_KEY, None)
+                            _set_query_param(SUBMISSION_ID_PARAM, None)
+                            _rerun()
+                    else:
+                        st.error("Unable to determine the submission file path.")
+
+            with st.expander("Raw payload", expanded=False):
+                st.json(payload)
     else:
         _set_query_param(SUBMISSION_ID_PARAM, None)

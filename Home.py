@@ -1,20 +1,22 @@
-"""Landing page for the questionnaire app."""
+"""Streamlit home screen focused on systems and assessments."""
+
+from __future__ import annotations
 
 import json
-from html import escape as html_escape
-from typing import Any, Dict, Iterable, List, Tuple
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional
 
+import pandas as pd
 import streamlit as st
 
 from lib.form_store import load_combined_schema
-from lib.questionnaire_utils import (
-    RUNNER_SELECTED_STATE_KEY,
-    iter_questionnaires,
-    normalize_questionnaires,
-)
-from lib.ui_theme import apply_app_theme, page_header, render_card
+import lib.questionnaire_utils as questionnaire_utils
+from lib.questionnaire_utils import RUNNER_SELECTED_STATE_KEY, normalize_questionnaires
+from lib.ui_theme import apply_app_theme, page_header
 
-
+# ``pages/01_Questionnaire.py`` imports ``load_schema`` from this module. Keep the
+# function signature stable even though the rest of the home screen changed.
 @st.cache_data(show_spinner=False)
 def load_schema() -> Dict[str, Any]:
     """Load the combined questionnaire schema from local form files."""
@@ -23,169 +25,282 @@ def load_schema() -> Dict[str, Any]:
     return combined
 
 
-def render_question_summary(questionnaires: Iterable[Tuple[str, Dict[str, Any]]]) -> None:
-    """Render a summary of the available questionnaires and their questions."""
+RECORD_NAME_KEY = getattr(questionnaire_utils, "RECORD_NAME_KEY", "record_name")
+SYSTEM_SUBMISSIONS_DIR = Path("system_registration/submissions")
+ASSESSMENT_SUBMISSIONS_DIR = Path("assessment/submissions")
+DEFAULT_TABLE_COLUMNS = ("Submission ID", "Submitted at", "Questionnaire")
+HOME_SELECTED_SYSTEM_KEY = "home_selected_system_id"
+ANSWERS_STATE_KEY = "questionnaire_answers"
+ASSESSMENT_KEY = "assessment"
+SYSTEM_REGISTRATION_KEY = "system_registration"
+RELATED_SYSTEM_FIELD = "related-sytem"
 
-    for questionnaire_key, questionnaire in questionnaires:
-        questions: List[Dict[str, Any]] = questionnaire.get("questions", [])
-        label = questionnaire.get("label", questionnaire_key)
-        safe_label = html_escape(str(label))
-        if not questions:
-            render_card(
-                "<p class='app-muted'>No questions configured yet.</p>",
-                title=safe_label,
-                compact=True,
-            )
+
+def _parse_timestamp(value: Any) -> tuple[str, float]:
+    """Return a normalised timestamp string and sort key."""
+
+    if isinstance(value, str) and value:
+        text = value.strip()
+        if text:
+            try:
+                dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError:
+                return text, 0.0
+            return dt.isoformat(), dt.timestamp()
+    return "", 0.0
+
+
+def _load_system_submission(path: Path) -> Dict[str, Any]:
+    """Load a single system registration submission."""
+
+    with path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    answers = payload.get("answers", {})
+    if not isinstance(answers, dict):
+        answers = {}
+    record: Dict[str, Any] = {
+        "Submission ID": payload.get("id", path.stem),
+        "Questionnaire": payload.get("questionnaire_key", ""),
+    }
+    timestamp, sort_key = _parse_timestamp(payload.get("submitted_at"))
+    record["Submitted at"] = timestamp
+    record["_sort_key"] = sort_key
+    record["_raw_payload"] = payload
+    record_name = payload.get(RECORD_NAME_KEY)
+    if isinstance(record_name, str) and record_name.strip():
+        record["Record name"] = record_name.strip()
+    for key, value in answers.items():
+        record[str(key)] = value
+    return record
+
+
+def _load_systems(directory: Path) -> List[Dict[str, Any]]:
+    """Return unique system submissions stored in ``directory``."""
+
+    if not directory.exists():
+        return []
+
+    records: Dict[str, Dict[str, Any]] = {}
+    for submission_file in sorted(directory.glob("*.json")):
+        try:
+            record = _load_system_submission(submission_file)
+        except json.JSONDecodeError:
+            st.warning(f"Skipping invalid submission file: {submission_file.name}")
+            continue
+        submission_id = str(record.get("Submission ID", submission_file.stem))
+        if submission_id in records:
+            existing_sort = records[submission_id].get("_sort_key", 0.0)
+            if record.get("_sort_key", 0.0) > existing_sort:
+                records[submission_id] = record
+        else:
+            records[submission_id] = record
+    return sorted(records.values(), key=lambda item: item.get("_sort_key", 0.0), reverse=True)
+
+
+def _table_columns(records: Iterable[Dict[str, Any]]) -> List[str]:
+    """Return the ordered columns to use for the systems table."""
+
+    columns = list(DEFAULT_TABLE_COLUMNS)
+    for record in records:
+        for key in record:
+            if key.startswith("_"):
+                continue
+            if key not in columns:
+                columns.append(key)
+    return columns
+
+
+def _strip_private_keys(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Remove helper keys (prefixed with ``_``) from the table rows."""
+
+    cleaned: List[Dict[str, Any]] = []
+    for record in records:
+        cleaned.append({key: value for key, value in record.items() if not key.startswith("_")})
+    return cleaned
+
+
+def _load_assessment_links() -> Dict[str, List[Dict[str, Any]]]:
+    """Return assessment submissions keyed by referenced system ID."""
+
+    links: Dict[str, List[Dict[str, Any]]] = {}
+    if not ASSESSMENT_SUBMISSIONS_DIR.exists():
+        return links
+
+    for submission_file in sorted(ASSESSMENT_SUBMISSIONS_DIR.glob("*.json")):
+        try:
+            with submission_file.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except (OSError, json.JSONDecodeError):
             continue
 
-        question_markup: List[str] = []
-        for question in questions:
-            question_label = html_escape(str(question.get("label", "Untitled question")))
-            question_key = html_escape(str(question.get("key", "n/a")))
-            question_type = html_escape(str(question.get("type", "unknown")))
-            item_markup = [
-                f"<strong>{question_label}</strong>",
-                (
-                    f"<div class='app-question-list__meta'>"
-                    f"Key: <code>{question_key}</code> · Type: <code>{question_type}</code>"
-                    "</div>"
-                ),
-            ]
-            if show_if := question.get("show_if"):
-                show_if_code = html_escape(json.dumps(show_if, indent=2))
-                item_markup.append(
-                    f"<pre><code class='language-json'>{show_if_code}</code></pre>"
-                )
-            question_markup.append(
-                f"<li class='app-question-list__item'>{''.join(item_markup)}</li>"
-            )
+        answers = payload.get("answers", {})
+        if not isinstance(answers, dict):
+            continue
+        system_id = str(answers.get(RELATED_SYSTEM_FIELD, "")).strip()
+        if not system_id:
+            continue
 
-        render_card(
-            f"<ul class='app-question-list'>{''.join(question_markup)}</ul>",
-            title=safe_label,
-            compact=True,
-        )
+        timestamp, sort_key = _parse_timestamp(payload.get("submitted_at"))
+        record = {
+            "submission_id": payload.get("id", submission_file.stem),
+            "timestamp": timestamp,
+            "_sort_key": sort_key,
+        }
+        entries = links.setdefault(system_id, [])
+        entries.append(record)
+
+    for records in links.values():
+        records.sort(key=lambda item: item.get("_sort_key", 0.0), reverse=True)
+
+    return links
 
 
-def render_launch_checklist() -> None:
-    """Display the quick launch checklist for the workflow."""
+def _switch_to_questionnaire(selected_key: str) -> None:
+    """Navigate to the questionnaire runner with ``selected_key`` selected."""
 
-    checklist_steps = [
-        "Configure secrets",
-        "Create personal access token",
-        "Open a draft pull request",
-        "Publish the updated schema",
-    ]
-    checklist_markup = "".join(
-        f"<li><span class='app-checklist__badge'>{index}</span>{html_escape(step)}</li>"
-        for index, step in enumerate(checklist_steps, start=1)
-    )
-    render_card(
-        f"<ul class='app-checklist'>{checklist_markup}</ul>",
-        title="Launch checklist",
-        compact=True,
-    )
+    st.session_state[RUNNER_SELECTED_STATE_KEY] = selected_key
+    if hasattr(st, "switch_page"):
+        try:
+            st.switch_page("pages/01_Questionnaire.py")
+        except Exception:  # pragma: no cover - streamlit navigation fallback
+            st.info("Use the navigation menu to open the Questionnaire page.")
+    else:
+        st.info("Use the navigation menu to open the Questionnaire page.")
+
+
+def _launch_assessment(system_id: str) -> None:
+    """Open the assessment questionnaire with ``system_id`` preselected."""
+
+    answers_state: Dict[str, Dict[str, Any]] = st.session_state.setdefault(ANSWERS_STATE_KEY, {})
+    assessment_answers = answers_state.setdefault(ASSESSMENT_KEY, {})
+    assessment_answers[RELATED_SYSTEM_FIELD] = system_id
+    answers_state[ASSESSMENT_KEY] = assessment_answers
+    st.session_state[ANSWERS_STATE_KEY] = answers_state
+    _switch_to_questionnaire(ASSESSMENT_KEY)
+
+
+def _launch_system_registration() -> None:
+    """Open the system registration questionnaire."""
+
+    answers_state: Dict[str, Dict[str, Any]] = st.session_state.setdefault(ANSWERS_STATE_KEY, {})
+    answers_state.setdefault(SYSTEM_REGISTRATION_KEY, {})
+    st.session_state[ANSWERS_STATE_KEY] = answers_state
+    _switch_to_questionnaire(SYSTEM_REGISTRATION_KEY)
 
 
 def main() -> None:
-    """Entry point for the landing page."""
+    """Render the home screen."""
 
-    apply_app_theme(page_title="Config-driven Questionnaire", page_icon="📝")
-
+    apply_app_theme(page_title="Assessment home", page_icon="🏠")
     page_header(
-        "Config-driven Questionnaire Hub",
-        "A single JSON schema powering runner, editor, and review workflows.",
-        icon="📝",
+        "Assessment home",
+        "Review systems, start assessments, and register new solutions.",
+        icon="🏠",
     )
 
-    render_card(
-        """
-        <p>
-            Welcome! This project demonstrates how a centrally managed JSON schema can
-            deliver a polished questionnaire experience alongside tools for editing and
-            reviewing responses.
-        </p>
-        <p>
-            Use the quick links and launch checklist below to jump into the workflow that
-            matters most for your team.
-        </p>
-        """,
-        title="Getting started",
-    )
+    schema = load_schema()
+    questionnaires = normalize_questionnaires(schema) if schema else {}
+    has_assessment = ASSESSMENT_KEY in questionnaires
+    has_registration = SYSTEM_REGISTRATION_KEY in questionnaires
 
-    render_launch_checklist()
-
-    st.subheader("Schema health")
-    schema_status = st.empty()
-
-    try:
-        schema = load_schema()
-    except json.JSONDecodeError as exc:  # pragma: no cover - streamlit UI feedback
-        schema_status.error("Schema failed to parse. See details below for fixes.")
-        st.code(str(exc))
-        return
-
-    questionnaires = normalize_questionnaires(schema)
-    if not schema or not questionnaires:
-        schema_status.warning(
-            "Schema files not found. Add form_schemas/<name>/form_schema.json to continue."
+    if not has_assessment or not has_registration:
+        st.warning(
+            "Both the assessment and system registration questionnaires must be present "
+            "to fully use this workflow."
         )
+
+    systems = _load_systems(SYSTEM_SUBMISSIONS_DIR)
+    assessment_links = _load_assessment_links()
+    for record in systems:
+        submission_id = str(record.get("Submission ID", ""))
+        linked = assessment_links.get(submission_id, [])
+        record["Has assessment"] = "Yes" if linked else "No"
+        record["Latest assessment"] = linked[0]["submission_id"] if linked else "—"
+
+    total_systems = len(systems)
+    unique_questionnaires = {
+        str(record.get("Questionnaire", ""))
+        for record in systems
+        if str(record.get("Questionnaire", ""))
+    }
+    most_recent = systems[0].get("Submitted at", "—") if systems else "—"
+
+    metric_col1, metric_col2, metric_col3 = st.columns(3)
+    metric_col1.metric("Registered systems", total_systems or "0")
+    metric_col2.metric("Questionnaires", len(unique_questionnaires) or "—")
+    metric_col3.metric("Most recent registration", most_recent or "—")
+
+    st.markdown("---")
+
+    register_col, actions_col = st.columns([1, 3])
+    with register_col:
+        if st.button("Register a system", type="primary"):
+            _launch_system_registration()
+
+    if not systems:
+        st.info("No systems registered yet. Start by registering a new system.")
+        st.page_link("pages/01_Questionnaire.py", label="Open questionnaire", icon="🗒️")
+        st.page_link("pages/03_Registered_Systems.py", label="View submissions", icon="📋")
         return
 
-    total_questions = sum(len(entry.get("questions", [])) for entry in questionnaires.values())
-    schema_status.success(
-        f"Schema loaded with {len(questionnaires)} questionnaire(s) and {total_questions} question(s)."
-    )
+    columns = _table_columns(systems)
+    table_rows = _strip_private_keys(systems)
 
-    meta_col, version_col = st.columns(2)
-    meta_col.metric("Title", schema.get("title", "—"))
-    version_col.metric("Version", schema.get("version", "—"))
-
-    st.subheader("Choose where to start")
-    choice_options = [
-        (key, entry.get("label", key), len(entry.get("questions", [])))
-        for key, entry in questionnaires.items()
-    ]
-
-    if not choice_options:
-        st.info("No questionnaires configured yet. Use the editor to add one.")
+    selected_system_id = st.session_state.get(HOME_SELECTED_SYSTEM_KEY)
+    table_df = pd.DataFrame(table_rows, columns=columns)
+    if "Select" not in table_df.columns:
+        table_df.insert(0, "Select", False)
     else:
-        option_labels = [
-            f"{label} ({count} question{'s' if count != 1 else ''})"
-            for _, label, count in choice_options
-        ]
-        selected_index = 0
-        initial_selection = st.session_state.get(RUNNER_SELECTED_STATE_KEY)
-        if initial_selection:
-            for idx, (key, _, _) in enumerate(choice_options):
-                if key == initial_selection:
-                    selected_index = idx
-                    break
-        selection = st.selectbox(
-            "Questionnaire",
-            options=option_labels,
-            index=selected_index,
-            help="Select which questionnaire to open in the runner.",
+        table_df["Select"] = False
+    if selected_system_id:
+        table_df.loc[table_df["Submission ID"] == selected_system_id, "Select"] = True
+
+    with st.container():
+        st.markdown("<div class='app-card app-card--table'>", unsafe_allow_html=True)
+        edited_df = st.data_editor(
+            table_df,
+            hide_index=True,
+            column_order=["Select", *columns],
+            width="stretch",
+            num_rows="fixed",
+            key="home_systems_table",
+            column_config={
+                "Select": st.column_config.CheckboxColumn(
+                    "Select",
+                    help="Choose a system before launching an assessment.",
+                ),
+                **{
+                    column: st.column_config.Column(column, disabled=True)
+                    for column in columns
+                },
+            },
         )
-        selected_key = choice_options[option_labels.index(selection)][0]
-        st.session_state[RUNNER_SELECTED_STATE_KEY] = selected_key
+        st.markdown("</div>", unsafe_allow_html=True)
 
-        def _switch_to_questionnaire() -> None:
-            if hasattr(st, "switch_page"):
-                st.switch_page("pages/01_Questionnaire.py")
-            else:
-                st.info(
-                    "Use the navigation menu to open the Questionnaire page. "
-                    "Your selection will be remembered."
-                )
+    selected_rows = edited_df.loc[edited_df["Select"].astype(bool)] if not edited_df.empty else edited_df
+    candidate_id: Optional[str] = None
+    if not selected_rows.empty:
+        if len(selected_rows) > 1:
+            st.warning("Select only one system at a time before launching an assessment.")
+        else:
+            candidate_id = str(selected_rows.iloc[0]["Submission ID"])
+            st.session_state[HOME_SELECTED_SYSTEM_KEY] = candidate_id
 
-        if st.button("Start questionnaire", type="primary"):
-            _switch_to_questionnaire()
+    with actions_col:
+        if candidate_id:
+            if st.button("Launch assessment", type="primary", use_container_width=True):
+                _launch_assessment(candidate_id)
+        else:
+            st.button(
+                "Launch assessment",
+                type="primary",
+                use_container_width=True,
+                disabled=True,
+            )
 
-    st.page_link("pages/02_Editor.py", label="Open editor", icon="🛠️")
-
-    with st.expander("Question overview", expanded=False):
-        render_question_summary(iter_questionnaires(schema))
+    st.caption("Need to review details? Use the navigation menu to open the submissions pages.")
+    st.page_link("pages/03_Registered_Systems.py", label="Registered systems", icon="📋")
+    st.page_link("pages/04_Assessment_Submissions.py", label="Assessment submissions", icon="📝")
 
 
 if __name__ == "__main__":
