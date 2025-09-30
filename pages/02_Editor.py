@@ -61,6 +61,41 @@ def _normalize_group_connectors(groups: List[Dict[str, Any]]) -> None:
                 group["connector"] = "all"
 
 
+def _generate_group_label(groups: Sequence[Dict[str, Any]]) -> str:
+    """Return a unique, human-friendly label for a new rule group."""
+
+    used_labels = {
+        str(group.get("label", "")).strip()
+        for group in groups
+        if str(group.get("label", "")).strip()
+    }
+    base_index = len(groups) + 1
+    base_label = f"Group {base_index}"
+    candidate = base_label
+    suffix = 2
+    while candidate in used_labels:
+        candidate = f"{base_label} ({suffix})"
+        suffix += 1
+    return candidate
+
+
+def _ensure_group_labels(groups: List[Dict[str, Any]]) -> None:
+    """Ensure each rule group exposes a readable, unique label for the UI."""
+
+    used_labels: Dict[str, int] = {}
+    for index, group in enumerate(groups, start=1):
+        raw_label = str(group.get("label", "")).strip()
+        base_label = raw_label or f"Group {index}"
+        label = base_label
+        duplicate_index = used_labels.get(base_label, 0)
+        while label in used_labels:
+            duplicate_index += 1
+            label = f"{base_label} ({duplicate_index})"
+        used_labels[base_label] = duplicate_index
+        used_labels[label] = 0
+        group["label"] = label
+
+
 def _group_to_rule(group: Dict[str, Any]) -> Dict[str, Any]:
     """Convert a builder group into a schema-compatible rule segment."""
 
@@ -434,6 +469,7 @@ def sync_show_if_builder_state(schema: Dict[str, Any]) -> Dict[str, Dict[str, An
             groups = [{"mode": "all", "clauses": [], "connector": None}]
 
         _normalize_group_connectors(groups)
+        _ensure_group_labels(groups)
 
         active_group = existing_state.get("active_group", 0)
         if not 0 <= active_group < len(groups):
@@ -696,7 +732,9 @@ def render_show_if_builder(
     target_state = builder_state.setdefault(
         question_key,
         {
-            "groups": [{"mode": "all", "clauses": [], "connector": None}],
+            "groups": [
+                {"mode": "all", "clauses": [], "connector": None, "label": "Group 1"}
+            ],
             "active_group": 0,
             "unsupported": False,
         },
@@ -711,12 +749,13 @@ def render_show_if_builder(
 
     groups = target_state.setdefault(
         "groups",
-        [{"mode": "all", "clauses": [], "connector": None}],
+        [{"mode": "all", "clauses": [], "connector": None, "label": "Group 1"}],
     )
     if not groups:
         groups.append({"mode": "all", "clauses": [], "connector": None})
 
     _normalize_group_connectors(groups)
+    _ensure_group_labels(groups)
 
     active_group_index = target_state.get("active_group", 0)
     if not 0 <= active_group_index < len(groups):
@@ -758,8 +797,16 @@ def render_show_if_builder(
         )
 
     if add_group_clicked:
-        groups.append({"mode": "all", "clauses": [], "connector": "all"})
+        groups.append(
+            {
+                "mode": "all",
+                "clauses": [],
+                "connector": "all",
+                "label": _generate_group_label(groups),
+            }
+        )
         _normalize_group_connectors(groups)
+        _ensure_group_labels(groups)
         new_index = len(groups) - 1
         target_state["active_group"] = new_index
         st.session_state[group_selector_key] = new_index
@@ -772,7 +819,7 @@ def render_show_if_builder(
             "Select rule group",
             options=list(range(len(groups))),
             key=group_selector_key,
-            format_func=lambda idx: f"Group {idx + 1}",
+            format_func=lambda idx: groups[idx].get("label", f"Group {idx + 1}"),
         )
 
     selected_group_index = st.session_state[group_selector_key]
@@ -782,6 +829,7 @@ def render_show_if_builder(
 
     active_group = groups[selected_group_index]
     _normalize_group_connectors(groups)
+    _ensure_group_labels(groups)
 
     if len(groups) > 1:
         summary_parts: List[str] = []
@@ -789,7 +837,11 @@ def render_show_if_builder(
             connector = group.get("connector")
             mode_label = str(group.get("mode", "all")).upper()
             clause_count = len(group.get("clauses", []))
-            description = f"{mode_label} ({clause_count} clause{'s' if clause_count != 1 else ''})"
+            label = group.get("label", f"Group {idx + 1}")
+            description = (
+                f"{label}: {mode_label} ({clause_count} clause"
+                f"{'s' if clause_count != 1 else ''})"
+            )
             if idx == 0:
                 summary_parts.append(description)
             else:
@@ -797,7 +849,37 @@ def render_show_if_builder(
                 summary_parts.append(f"{connector_label} {description}")
         st.caption(" · ".join(summary_parts))
 
-    mode_col, connector_col, remove_col = st.columns([2, 2, 1])
+    label_col, mode_col, connector_col, remove_col = st.columns([3, 2, 2, 1])
+
+    group_label_key = f"show_if_group_label_{question_key}_{selected_group_index}"
+    current_label = active_group.get("label", f"Group {selected_group_index + 1}")
+    stored_label = st.session_state.get(group_label_key)
+    if stored_label != current_label:
+        st.session_state[group_label_key] = current_label
+
+    with label_col:
+        entered_label = st.text_input(
+            "Group name",
+            key=group_label_key,
+            help="Used only for display—rules are unaffected.",
+        )
+        sanitized_label = entered_label.strip()
+        if not sanitized_label:
+            sanitized_label = f"Group {selected_group_index + 1}"
+
+        if sanitized_label != current_label:
+            duplicate = any(
+                sanitized_label == group.get("label")
+                for idx, group in enumerate(groups)
+                if idx != selected_group_index
+            )
+            if duplicate:
+                st.warning("Group name must be unique.")
+                st.session_state[group_label_key] = current_label
+            else:
+                active_group["label"] = sanitized_label
+                st.session_state[group_label_key] = sanitized_label
+                _ensure_group_labels(groups)
 
     group_mode_key = f"show_if_group_mode_{question_key}_{selected_group_index}"
     current_mode = active_group.get("mode", "all")
@@ -845,6 +927,7 @@ def render_show_if_builder(
                 if not groups:
                     groups.append({"mode": "all", "clauses": [], "connector": None})
                 _normalize_group_connectors(groups)
+                _ensure_group_labels(groups)
                 new_index = min(selected_group_index, len(groups) - 1)
                 target_state["active_group"] = new_index
                 st.session_state[group_selector_key] = new_index
@@ -1045,6 +1128,7 @@ def render_show_if_builder(
             target_state["groups"] = [
                 {"mode": "all", "clauses": [], "connector": None}
             ]
+            _ensure_group_labels(target_state["groups"])
             st.session_state[group_selector_key] = 0
             target_state["active_group"] = 0
             _sync_question_rule()
