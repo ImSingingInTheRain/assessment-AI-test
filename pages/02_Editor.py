@@ -61,7 +61,9 @@ def _normalize_groups(groups: List[Dict[str, Any]]) -> None:
             group.pop("connector", None)
 
 
-def _generate_group_label(groups: Sequence[Dict[str, Any]]) -> str:
+def _generate_group_label(
+    groups: Sequence[Dict[str, Any]], base_label: str = "New rule group"
+) -> str:
     """Return a unique, human-friendly label for a new rule group."""
 
     used_labels = {
@@ -69,14 +71,17 @@ def _generate_group_label(groups: Sequence[Dict[str, Any]]) -> str:
         for group in groups
         if str(group.get("label", "")).strip()
     }
-    base_index = len(groups) + 1
-    base_label = f"Group {base_index}"
+
     candidate = base_label
+    if candidate not in used_labels:
+        return candidate
+
     suffix = 2
-    while candidate in used_labels:
+    while True:
         candidate = f"{base_label} ({suffix})"
+        if candidate not in used_labels:
+            return candidate
         suffix += 1
-    return candidate
 
 
 def _ensure_group_labels(groups: List[Dict[str, Any]]) -> None:
@@ -854,7 +859,7 @@ def render_show_if_builder(
     if add_group_clicked:
         new_group = {
             "mode": "all",
-            "clauses": [],
+            "clauses": [{"operator": "always"}],
             "label": _generate_group_label(groups),
         }
         groups.append(new_group)
@@ -1146,6 +1151,8 @@ def render_show_if_builder(
                 header = operator_label
                 if clause.get("field"):
                     header = f"{field_label} · {operator_label}"
+                elif clause.get("operator") == "always":
+                    header = "Always (no condition)"
                 st.markdown(f"**{header}**")
                 if value_label != "—":
                     st.caption(f"Value: {value_label}")
