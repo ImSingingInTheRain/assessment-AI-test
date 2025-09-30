@@ -205,7 +205,7 @@ def should_show_question(question: Dict[str, Any], answers: Dict[str, Any]) -> b
 def _get_query_param(name: str) -> Optional[str]:
     """Return the first query parameter value if present."""
 
-    params = st.experimental_get_query_params()
+    params = st.query_params
     values = params.get(name)
     if not values:
         return None
@@ -217,9 +217,8 @@ def _get_query_param(name: str) -> Optional[str]:
 def _set_query_param(name: str, value: str) -> None:
     """Persist ``value`` in the query string under ``name``."""
 
-    params = st.experimental_get_query_params()
+    params = st.query_params
     params[name] = value
-    st.experimental_set_query_params(**params)
 
 
 def render_question(
