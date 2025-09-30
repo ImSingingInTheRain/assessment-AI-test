@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from html import escape as html_escape
 from typing import Any, Dict, List, Optional, Sequence
@@ -38,7 +39,7 @@ def _secrets_dict(name: str) -> Dict[str, Any]:
     """Return a mapping stored under ``name`` in Streamlit secrets."""
 
     value = st.secrets.get(name, {})  # type: ignore[arg-type]
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return dict(value)
     return {}
 
