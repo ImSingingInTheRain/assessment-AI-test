@@ -29,7 +29,7 @@ from lib.schema_defaults import (
 SCHEMA_STATE_KEY = "editor_schema"
 SCHEMA_SHA_STATE_KEY = "editor_schema_sha"
 DRAFT_BRANCH_STATE_KEY = "editor_draft_branch"
-QUESTION_TYPES = ["single", "multiselect", "bool", "text"]
+QUESTION_TYPES = ["single", "multiselect", "bool", "text", "statement"]
 SHOW_IF_BUILDER_STATE_KEY = "editor_show_if_builder"
 
 OPERATOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
@@ -90,6 +90,7 @@ QUESTION_TYPE_OPERATORS: Dict[str, List[str]] = {
     "multiselect": ["includes", "not_includes", "any_selected", "all_selected", "contains_any"],
     "bool": ["is_true", "is_false"],
     "text": ["equals", "not_equals", "contains_any"],
+    "statement": ["always"],
 }
 DEFAULT_OPERATORS = ["equals", "not_equals", "contains_any"]
 PREVIEW_ANSWERS_STATE_KEY = "editor_preview_answers"
@@ -332,6 +333,8 @@ def _operator_options(question: Optional[Dict[str, Any]]) -> List[str]:
 
     question_type = question.get("type")
     operators = QUESTION_TYPE_OPERATORS.get(str(question_type), DEFAULT_OPERATORS)
+    if "always" not in operators:
+        operators = [*operators, "always"]
     return operators or DEFAULT_OPERATORS
 
 
@@ -943,8 +946,34 @@ def render_preview_question(question: Dict[str, Any], answers: Dict[str, Any]) -
             help=help_text,
         )
         answers[question_key] = text_value
+    elif question_type == "statement":
+        answers.pop(question_key, None)
+        if widget_key in st.session_state:
+            st.session_state.pop(widget_key)
+        st.info(label)
+        if help_text:
+            st.caption(help_text)
     else:
         st.warning(f"Unsupported question type: {question_type}")
+
+
+def _rename_show_if_fields(schema: Dict[str, Any], old_key: str, new_key: str) -> None:
+    """Update show_if rule field references when a question key changes."""
+
+    def _update_rule(rule: Any) -> None:
+        if isinstance(rule, dict):
+            if rule.get("field") == old_key:
+                rule["field"] = new_key
+            for value in rule.values():
+                _update_rule(value)
+        elif isinstance(rule, list):
+            for item in rule:
+                _update_rule(item)
+
+    for question in schema.get("questions", []):
+        show_if = question.get("show_if")
+        if show_if:
+            _update_rule(show_if)
 
 def validate_schema(schema: Dict[str, Any]) -> List[str]:
     """Run simple validation checks on the questionnaire schema."""
@@ -1127,10 +1156,15 @@ def handle_publish(schema: Dict[str, Any]) -> None:
 def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> None:
     """Render the editor form for a single question."""
 
-    key = question.get("key", "")
-    with st.form(f"edit_{key}"):
-        st.subheader(f"Edit question: {question.get('label', key)}")
-        st.caption(f"Key: `{key}`")
+    original_key = question.get("key", "")
+    with st.form(f"edit_{original_key}"):
+        st.subheader(f"Edit question: {question.get('label', original_key)}")
+
+        key_input = st.text_input(
+            "Key",
+            value=original_key,
+            help="Unique identifier used in the schema. Letters, numbers, and underscores only.",
+        )
 
         col_label, col_type = st.columns([3, 2])
         with col_label:
@@ -1140,10 +1174,15 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
                 help="Shown to respondents on the questionnaire page.",
             )
         with col_type:
+            current_type = question.get("type", "text")
+            try:
+                default_type_index = QUESTION_TYPES.index(current_type)
+            except ValueError:
+                default_type_index = QUESTION_TYPES.index("text")
             question_type = st.selectbox(
                 "Answer type",
                 options=QUESTION_TYPES,
-                index=QUESTION_TYPES.index(question.get("type", "text")),
+                index=default_type_index,
                 help="Determines how the answer is captured.",
             )
 
@@ -1162,7 +1201,7 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
                 help="Appears inside the input when no answer has been provided.",
             )
 
-        options = render_options_editor(key, question_type, question.get("options"))
+        options = render_options_editor(original_key, question_type, question.get("options"))
 
         with st.expander(
             "Visibility conditions",
@@ -1189,6 +1228,19 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
             delete_requested = st.form_submit_button("Delete question", type="secondary")
 
         if submitted:
+            new_key = key_input.strip()
+            if not new_key:
+                st.error("Key is required.")
+                return
+
+            duplicate_key = any(
+                existing.get("key") == new_key and existing is not question
+                for existing in schema.get("questions", [])
+            )
+            if duplicate_key:
+                st.error("A question with this key already exists.")
+                return
+
             if question_type in {"single", "multiselect"} and not options:
                 st.error("Add at least one option for selectable question types.")
                 return
@@ -1206,8 +1258,8 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
 
             updated_question: Dict[str, Any] = {
                 **preserved_fields,
-                "key": key,
-                "label": label.strip() or key,
+                "key": new_key,
+                "label": label.strip() or new_key,
                 "type": question_type,
             }
             if help_text.strip():
@@ -1220,16 +1272,40 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
                 updated_question["show_if"] = show_if
 
             for idx, existing in enumerate(schema.get("questions", [])):
-                if existing.get("key") == key:
+                if existing.get("key") == original_key:
                     schema["questions"][idx] = updated_question
                     break
+
+            if new_key != original_key:
+                preview_answers = st.session_state.get(PREVIEW_ANSWERS_STATE_KEY)
+                if isinstance(preview_answers, dict) and original_key in preview_answers:
+                    preview_answers[new_key] = preview_answers.pop(original_key)
+                    st.session_state[PREVIEW_ANSWERS_STATE_KEY] = preview_answers
+
+                preview_widget_key = f"preview_question_{original_key}"
+                if preview_widget_key in st.session_state:
+                    st.session_state.pop(preview_widget_key)
+
+                builder_state = st.session_state.get(SHOW_IF_BUILDER_STATE_KEY)
+                if isinstance(builder_state, dict) and original_key in builder_state:
+                    builder_state[new_key] = builder_state.pop(original_key)
+                    st.session_state[SHOW_IF_BUILDER_STATE_KEY] = builder_state
+
+                if st.session_state.get("show_if_target_question") == original_key:
+                    st.session_state["show_if_target_question"] = new_key
+
+                for session_key in list(st.session_state.keys()):
+                    if session_key.startswith("show_if_") and session_key.endswith(f"_{original_key}"):
+                        st.session_state.pop(session_key)
+
+                _rename_show_if_fields(schema, original_key, new_key)
 
             st.session_state[SCHEMA_STATE_KEY] = schema
             st.success("Question updated. Use Publish or Save as Draft to persist changes.")
 
         if delete_requested:
             schema["questions"] = [
-                q for q in schema.get("questions", []) if q.get("key") != key
+                q for q in schema.get("questions", []) if q.get("key") != original_key
             ]
             st.session_state[SCHEMA_STATE_KEY] = schema
             st.warning("Question removed. Use Publish or Save as Draft to persist changes.")
