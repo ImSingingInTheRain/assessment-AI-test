@@ -84,13 +84,8 @@
         "all": [
           {
             "field": "use-AI",
-            "operator": "contains_any",
-            "value": [
-              "Biometric categorization",
-              "Biometric identification",
-              "Recruitment",
-              "Employee management"
-            ]
+            "operator": "equals",
+            "value": "Yes"
           }
         ]
       }
