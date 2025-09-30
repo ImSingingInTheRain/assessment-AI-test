@@ -118,23 +118,44 @@
       "label": "Your solution is high risk",
       "type": "statement",
       "show_if": {
-        "any": [
+        "all": [
           {
-            "operator": "contains_any",
-            "field": "high-risk",
-            "value": [
-              "Biometric categorization",
-              "Biometric identification",
-              "Recruitment",
-              "Employee management"
+            "any": [
+              {
+                "operator": "contains_any",
+                "field": "high-risk",
+                "value": [
+                  "Biometric categorization",
+                  "Biometric identification",
+                  "Recruitment",
+                  "Employee management"
+                ]
+              },
+              {
+                "operator": "contains_any",
+                "field": "q_sensitive_categories",
+                "value": [
+                  "Biometric",
+                  "Health"
+                ]
+              }
             ]
           },
           {
-            "operator": "contains_any",
-            "field": "q_sensitive_categories",
-            "value": [
-              "Biometric",
-              "Health"
+            "any": [
+              {
+                "operator": "always"
+              },
+              {
+                "operator": "not_equals",
+                "field": "q_area",
+                "value": "Research"
+              },
+              {
+                "operator": "not_equals",
+                "field": "rd-exception",
+                "value": "Yes"
+              }
             ]
           }
         ]
