@@ -829,7 +829,7 @@ def render_show_if_builder(
     else:
         st.session_state[group_selector_key] = -1
 
-    st.markdown("**Current rule groups**")
+    st.subheader("Rule groups overview")
     if groups:
         for idx, group in enumerate(groups):
             mode_label = str(group.get("mode", "all")).upper()
@@ -840,20 +840,21 @@ def render_show_if_builder(
                 f"{'s' if clause_count != 1 else ''}"
             )
     else:
-        st.info("No rules are set.")
+        st.info("This question does not have any rule groups yet.")
 
     selected_group_index = -1
     if groups:
         selected_group_index = st.selectbox(
-            "Select rule group to configure",
+            "Choose a rule group to edit",
             options=list(range(len(groups))),
             key=group_selector_key,
             format_func=lambda idx: groups[idx].get("label", f"Group {idx + 1}"),
+            help="Pick which group of rules you would like to review or update.",
         )
         target_state["active_group"] = selected_group_index
 
     add_group_clicked = st.button(
-        "Add new rule group", key=f"show_if_add_group_{question_key}"
+        "Add rule group", key=f"show_if_add_group_{question_key}", help="Create a new set of conditions for showing this question."
     )
 
     if add_group_clicked:
@@ -876,12 +877,13 @@ def render_show_if_builder(
     if len(groups) > 1:
         combine_key = f"show_if_group_combine_{question_key}"
         combine_choice = st.radio(
-            "When evaluating rule groups, require",
+            "Show this question when",
             options=("all", "any"),
             index=(0 if target_state.get("combine_mode", "all") == "all" else 1),
             key=combine_key,
             horizontal=True,
-            format_func=lambda value: "all groups" if value == "all" else "any group",
+            format_func=lambda value: "every group matches" if value == "all" else "any group matches",
+            help="Control how the rule groups work together.",
         )
         if combine_choice != target_state.get("combine_mode"):
             target_state["combine_mode"] = combine_choice
@@ -904,9 +906,9 @@ def render_show_if_builder(
 
     with label_col:
         entered_label = st.text_input(
-            "Group name",
+            "Group title",
             key=group_label_key,
-            help="Used only for display—rules are unaffected.",
+            help="Give this group a clear name so it is easy to find later.",
         )
         sanitized_label = entered_label.strip()
         if not sanitized_label:
@@ -932,12 +934,13 @@ def render_show_if_builder(
         current_mode = "all"
     with mode_col:
         mode_choice = st.radio(
-            "Within this group, match",
+            "Inside this group require",
             options=("all", "any"),
             index=(0 if current_mode == "all" else 1),
             key=group_mode_key,
             horizontal=True,
-            format_func=lambda value: "all clauses" if value == "all" else "any clause",
+            format_func=lambda value: "all conditions" if value == "all" else "any condition",
+            help="Choose whether every clause must match or if one match is enough.",
         )
         if mode_choice != current_mode:
             active_group["mode"] = mode_choice
@@ -946,9 +949,10 @@ def render_show_if_builder(
     with remove_col:
         remove_disabled = len(groups) == 0
         remove_clicked = st.button(
-            "Remove group",
+            "Delete group",
             key=f"show_if_remove_group_{question_key}_{selected_group_index}",
             disabled=remove_disabled,
+            help="Remove this group and all of its clauses.",
         )
         if remove_clicked and not remove_disabled:
             groups.pop(selected_group_index)
@@ -967,8 +971,9 @@ def render_show_if_builder(
 
     with save_col:
         if st.button(
-            "Save group",
+            "Save changes",
             key=f"show_if_save_group_{question_key}_{selected_group_index}",
+            help="Record updates you've made to this group.",
         ):
             _sync_question_rule()
             st.success("Rule group saved.")
@@ -977,6 +982,245 @@ def render_show_if_builder(
 
     clause_question_options = [key for key in question_keys if key != question_key] or question_keys
     field_options = [""] + clause_question_options
+
+    if active_group["clauses"]:
+        st.markdown("**Clauses in this group**")
+        for idx, clause in enumerate(active_group["clauses"]):
+            clause_field_label = _format_question_option(
+                str(clause.get("field", "") or ""),
+                lookup,
+            )
+            operator_details = OPERATOR_DEFINITIONS.get(clause.get("operator", ""), {})
+            operator_label = operator_details.get("label", clause.get("operator", ""))
+            summary_parts: List[str] = []
+            if clause.get("field"):
+                summary_parts.append(clause_field_label)
+            summary_parts.append(operator_label)
+            clause_summary = " · ".join(part for part in summary_parts if part)
+            if not clause_summary:
+                clause_summary = f"Clause {idx + 1}"
+
+            with st.expander(f"Clause {idx + 1}: {clause_summary}"):
+                edit_field_col, edit_operator_col = st.columns([2, 2])
+
+                current_field_value = str(clause.get("field", "") or "")
+                available_field_options = list(field_options)
+                if current_field_value and current_field_value not in available_field_options:
+                    available_field_options.append(current_field_value)
+                edit_field_key = (
+                    f"show_if_existing_field_{question_key}_{selected_group_index}_{idx}"
+                )
+                with edit_field_col:
+                    selected_field_value = st.selectbox(
+                        "Question to reference",
+                        options=available_field_options,
+                        index=available_field_options.index(current_field_value),
+                        key=edit_field_key,
+                        format_func=lambda key: _format_question_option(key, lookup),
+                        help="Choose which question's answer this clause should evaluate.",
+                    )
+
+                referenced_question = (
+                    lookup.get(selected_field_value) if selected_field_value else None
+                )
+                operator_options = _operator_options(referenced_question)
+                current_operator_value = str(
+                    clause.get("operator", operator_options[0] if operator_options else "equals")
+                )
+                if current_operator_value not in operator_options:
+                    operator_options = [current_operator_value] + [
+                        option for option in operator_options if option != current_operator_value
+                    ]
+                edit_operator_key = (
+                    f"show_if_existing_operator_{question_key}_{selected_group_index}_{idx}"
+                )
+                with edit_operator_col:
+                    selected_operator_value = st.selectbox(
+                        "Condition type",
+                        options=operator_options,
+                        index=operator_options.index(current_operator_value),
+                        key=edit_operator_key,
+                        format_func=lambda op: OPERATOR_DEFINITIONS.get(op, {}).get("label", op),
+                        help="Select how the referenced answer should be compared.",
+                    )
+                    selected_operator_definition = OPERATOR_DEFINITIONS.get(
+                        selected_operator_value, {}
+                    )
+                    operator_description = selected_operator_definition.get("description")
+                    if operator_description:
+                        st.caption(operator_description)
+
+                if selected_operator_value != current_operator_value:
+                    clause["operator"] = selected_operator_value
+                    selected_operator_definition = OPERATOR_DEFINITIONS.get(
+                        selected_operator_value, {}
+                    )
+                    _sync_question_rule()
+                else:
+                    selected_operator_definition = OPERATOR_DEFINITIONS.get(
+                        current_operator_value, {}
+                    )
+
+                if selected_field_value:
+                    if clause.get("field") != selected_field_value:
+                        clause["field"] = selected_field_value
+                        _sync_question_rule()
+                elif "field" in clause:
+                    clause.pop("field", None)
+                    _sync_question_rule()
+
+                value_mode = selected_operator_definition.get("value_mode", "none")
+                if selected_operator_value != "always" and not selected_field_value:
+                    st.warning("Choose a question to reference for this clause.")
+
+                if value_mode == "single":
+                    value_options: List[str] = []
+                    if referenced_question:
+                        reference_options = referenced_question.get("options")
+                        if isinstance(reference_options, list):
+                            value_options = [
+                                str(option) for option in reference_options if isinstance(option, str)
+                            ]
+
+                    if value_options:
+                        current_value = str(clause.get("value", value_options[0]))
+                        if current_value not in value_options:
+                            value_options = [current_value] + [
+                                option for option in value_options if option != current_value
+                            ]
+                        value_single_key = (
+                            f"show_if_existing_value_single_{question_key}_{selected_group_index}_{idx}"
+                        )
+                        selected_value = st.selectbox(
+                            "Comparison value",
+                            options=value_options,
+                            index=value_options.index(current_value),
+                            key=value_single_key,
+                            help="Pick the answer choice that should trigger this clause.",
+                        )
+                        if clause.get("value") != selected_value:
+                            clause["value"] = selected_value
+                            _sync_question_rule()
+                    else:
+                        value_text_key = (
+                            f"show_if_existing_value_text_{question_key}_{selected_group_index}_{idx}"
+                        )
+                        if value_text_key not in st.session_state:
+                            st.session_state[value_text_key] = str(clause.get("value", ""))
+                        entered_value = st.text_input(
+                            "Comparison value",
+                            key=value_text_key,
+                            placeholder="Enter a value to compare against",
+                        )
+                        sanitized_value = entered_value.strip()
+                        if sanitized_value:
+                            if clause.get("value") != sanitized_value:
+                                clause["value"] = sanitized_value
+                                _sync_question_rule()
+                        else:
+                            if "value" in clause:
+                                clause.pop("value", None)
+                                _sync_question_rule()
+                            st.info("Provide a value to compare against.")
+                elif value_mode == "multi":
+                    value_options = []
+                    if referenced_question:
+                        reference_options = referenced_question.get("options")
+                        if isinstance(reference_options, list):
+                            value_options = [
+                                str(option) for option in reference_options if isinstance(option, str)
+                            ]
+
+                    if value_options:
+                        existing_values = clause.get("value")
+                        if not isinstance(existing_values, list):
+                            existing_values = []
+                        normalized_existing = [str(option) for option in existing_values]
+                        value_multi_key = (
+                            f"show_if_existing_value_multi_{question_key}_{selected_group_index}_{idx}"
+                        )
+                        if value_multi_key not in st.session_state:
+                            st.session_state[value_multi_key] = normalized_existing
+                        st.session_state[value_multi_key] = [
+                            option
+                            for option in st.session_state[value_multi_key]
+                            if option in value_options
+                        ]
+                        selected_values = st.multiselect(
+                            "Matching values",
+                            options=value_options,
+                            default=st.session_state[value_multi_key],
+                            key=value_multi_key,
+                            help="Select all answers that should satisfy this clause.",
+                        )
+                        if clause.get("value") != selected_values:
+                            clause["value"] = selected_values
+                            _sync_question_rule()
+                        if not selected_values:
+                            st.info("Select at least one value to keep this clause active.")
+                    else:
+                        value_rows_key = (
+                            f"show_if_existing_value_rows_{question_key}_{selected_group_index}_{idx}"
+                        )
+                        existing_rows = st.session_state.get(value_rows_key)
+                        if existing_rows is None:
+                            clause_values = clause.get("value")
+                            if isinstance(clause_values, Sequence) and not isinstance(clause_values, str):
+                                default_rows = [
+                                    {"Value": str(item)} for item in clause_values if str(item).strip()
+                                ] or [{"Value": ""}]
+                            else:
+                                default_rows = [{"Value": ""}]
+                        else:
+                            default_rows = existing_rows
+                        value_rows = st.data_editor(
+                            default_rows,
+                            num_rows="dynamic",
+                            hide_index=True,
+                            key=value_rows_key,
+                            use_container_width=True,
+                        )
+
+                        if hasattr(value_rows, "to_dict"):
+                            rows_iterable = value_rows.to_dict(orient="records")  # type: ignore[call-arg]
+                        elif isinstance(value_rows, list):
+                            rows_iterable = value_rows
+                        else:
+                            rows_iterable = []
+
+                        extracted: List[str] = []
+                        for row in rows_iterable:
+                            if isinstance(row, dict):
+                                raw_value = str(row.get("Value", "")).strip()
+                            else:
+                                raw_value = str(row).strip()
+                            if raw_value:
+                                extracted.append(raw_value)
+
+                        if clause.get("value") != extracted:
+                            clause["value"] = extracted
+                            _sync_question_rule()
+                        if not extracted:
+                            st.info("Add at least one value for this clause.")
+                else:
+                    if "value" in clause:
+                        clause.pop("value", None)
+                        _sync_question_rule()
+
+                remove_key = f"remove_clause_{question_key}_{selected_group_index}_{idx}"
+                if st.button(
+                    "Remove clause",
+                    key=remove_key,
+                    help="Delete this condition from the group.",
+                ):
+                    active_group["clauses"].pop(idx)
+                    _sync_question_rule()
+                    _rerun_app()
+                    return
+
+    st.divider()
+    st.markdown("**Add a new clause**")
+
     field_state_key = f"show_if_clause_field_{question_key}_{selected_group_index}"
     if field_state_key not in st.session_state:
         st.session_state[field_state_key] = field_options[1] if len(field_options) > 1 else ""
@@ -986,11 +1230,12 @@ def render_show_if_builder(
     selector_col, operator_col = st.columns([2, 2])
     with selector_col:
         clause_field_key = st.selectbox(
-            "When this question",
+            "Question to reference",
             options=field_options,
             index=field_options.index(st.session_state[field_state_key]),
             key=field_state_key,
             format_func=lambda key: _format_question_option(key, lookup),
+            help="Pick which existing question this new clause should depend on.",
         )
 
     referenced_question = lookup.get(clause_field_key) if clause_field_key else None
@@ -1004,11 +1249,12 @@ def render_show_if_builder(
 
     with operator_col:
         selected_operator = st.selectbox(
-            "Condition",
+            "Condition type",
             options=operator_options,
             index=operator_options.index(st.session_state[operator_state_key]),
             key=operator_state_key,
             format_func=lambda op: OPERATOR_DEFINITIONS.get(op, {}).get("label", op),
+            help="Decide how the selected question should be evaluated.",
         )
         operator_definition = OPERATOR_DEFINITIONS.get(selected_operator, {})
         operator_description = operator_definition.get("description")
@@ -1033,18 +1279,21 @@ def render_show_if_builder(
             if st.session_state[value_single_key] not in value_options:
                 st.session_state[value_single_key] = value_options[0]
             value = st.selectbox(
-                "Value",
+                "Comparison value",
                 options=value_options,
                 index=value_options.index(st.session_state[value_single_key]),
                 key=value_single_key,
+                help="Pick the answer that should satisfy this new clause.",
             )
         else:
             value = st.text_input(
-                "Value",
+                "Comparison value",
                 key=f"show_if_value_text_{question_key}_{selected_group_index}",
                 placeholder="Enter a value to compare against",
             )
             value_valid = bool(str(value).strip())
+            if not value_valid:
+                st.info("Provide a value to compare against.")
     elif value_mode == "multi":
         value_options = []
         if referenced_question:
@@ -1061,13 +1310,15 @@ def render_show_if_builder(
                     option for option in st.session_state[value_multi_key] if option in value_options
                 ]
             value = st.multiselect(
-                "Values",
+                "Matching values",
                 options=value_options,
                 default=st.session_state[value_multi_key],
                 key=value_multi_key,
-                help="Choose one or more values that should match.",
+                help="Choose one or more answers that should satisfy this clause.",
             )
             value_valid = bool(value)
+            if not value_valid:
+                st.info("Select at least one value to compare against.")
         else:
             value_rows_key = f"show_if_value_rows_{question_key}_{selected_group_index}"
             existing_rows = st.session_state.get(value_rows_key)
@@ -1103,11 +1354,15 @@ def render_show_if_builder(
             value = extracted
             value_valid = bool(extracted)
             if not extracted:
-                st.info("Add at least one value for this condition.")
+                st.info("Add at least one value for this clause.")
 
-    if st.button("Add clause", key=f"show_if_add_clause_{question_key}_{selected_group_index}"):
+    if st.button(
+        "Add condition",
+        key=f"show_if_add_clause_{question_key}_{selected_group_index}",
+        help="Append this new condition to the selected group.",
+    ):
         if selected_operator != "always" and not clause_field_key:
-            st.error("Select a question to reference in the clause.")
+            st.error("Select a question to reference for this clause.")
         elif value_mode == "single" and not value_valid:
             st.error("Provide a value to compare against.")
         elif value_mode == "multi" and not value_valid:
@@ -1131,46 +1386,17 @@ def render_show_if_builder(
             st.session_state.pop(f"show_if_value_single_{question_key}_{selected_group_index}", None)
             st.session_state.pop(f"show_if_value_multi_{question_key}_{selected_group_index}", None)
             st.session_state.pop(f"show_if_value_rows_{question_key}_{selected_group_index}", None)
-            st.success("Clause added.")
-
-    if active_group["clauses"]:
-        st.markdown("**Current clauses**")
-        for idx, clause in enumerate(active_group["clauses"]):
-            field_label = _format_question_option(
-                str(clause.get("field", "") or ""),
-                lookup,
-            )
-            operator_label = OPERATOR_DEFINITIONS.get(
-                clause.get("operator", ""),
-                {},
-            ).get("label", clause.get("operator", ""))
-            value_label = _format_clause_value(clause.get("value"))
-
-            clause_col, remove_col = st.columns([6, 1])
-            with clause_col:
-                header = operator_label
-                if clause.get("field"):
-                    header = f"{field_label} · {operator_label}"
-                elif clause.get("operator") == "always":
-                    header = "Always (no condition)"
-                st.markdown(f"**{header}**")
-                if value_label != "—":
-                    st.caption(f"Value: {value_label}")
-            with remove_col:
-                if st.button("Remove", key=f"remove_clause_{question_key}_{selected_group_index}_{idx}"):
-                    active_group["clauses"].pop(idx)
-                    _sync_question_rule()
-                    _rerun_app()
+            st.success("Condition added.")
 
     clear_col, _ = st.columns([1, 3])
     with clear_col:
-        if st.button("Clear rule", key=f"clear_show_if_{question_key}"):
+        if st.button("Clear all rules", key=f"clear_show_if_{question_key}", help="Remove every rule group and start fresh."):
             target_state["groups"] = []
             target_state["combine_mode"] = "all"
             st.session_state[group_selector_key] = -1
             target_state["active_group"] = -1
             _sync_question_rule()
-            st.success("Show rule cleared.")
+            st.success("All show_if rules cleared.")
             _rerun_app()
 
     if target_question.get("show_if"):
