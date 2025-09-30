@@ -13,6 +13,17 @@ import streamlit as st
 
 from Home import load_schema
 from lib.github_backend import GitHubBackend, create_branch, ensure_pr, put_file
+from lib.schema_defaults import (
+    DEFAULT_DEBUG_LABEL,
+    DEFAULT_INTRO_HEADING,
+    DEFAULT_PAGE_TITLE,
+    DEFAULT_SHOW_ANSWERS_SUMMARY,
+    DEFAULT_SHOW_DEBUG,
+    DEFAULT_SHOW_INTRODUCTION,
+    DEFAULT_SUBMIT_LABEL,
+    DEFAULT_SUBMIT_SUCCESS_MESSAGE,
+    intro_paragraphs_list,
+)
 
 SCHEMA_STATE_KEY = "editor_schema"
 SCHEMA_SHA_STATE_KEY = "editor_schema_sha"
@@ -176,6 +187,169 @@ def sync_show_if_builder_state(schema: Dict[str, Any]) -> Dict[str, Dict[str, An
 
     return builder_state
 
+
+def render_page_content_editor(schema: Dict[str, Any]) -> None:
+    """Render controls for editing questionnaire page content."""
+
+    page_settings = schema.get("page") if isinstance(schema.get("page"), dict) else {}
+    introduction_settings = (
+        page_settings.get("introduction")
+        if isinstance(page_settings.get("introduction"), dict)
+        else {}
+    )
+    submit_settings = (
+        page_settings.get("submit")
+        if isinstance(page_settings.get("submit"), dict)
+        else {}
+    )
+
+    if "title" in page_settings:
+        page_title_value = str(page_settings.get("title") or "")
+    else:
+        page_title_value = DEFAULT_PAGE_TITLE
+
+    if "heading" in introduction_settings:
+        intro_heading_value = str(introduction_settings.get("heading") or "")
+    else:
+        intro_heading_value = DEFAULT_INTRO_HEADING
+
+    if "paragraphs" in introduction_settings:
+        paragraphs_source = introduction_settings.get("paragraphs")
+        if isinstance(paragraphs_source, list):
+            intro_paragraphs_value = "\n".join(str(item) for item in paragraphs_source)
+        elif isinstance(paragraphs_source, str):
+            intro_paragraphs_value = paragraphs_source
+        else:
+            intro_paragraphs_value = ""
+    else:
+        intro_paragraphs_value = "\n".join(intro_paragraphs_list())
+
+    if "label" in submit_settings:
+        submit_label_value = str(submit_settings.get("label") or "")
+    else:
+        submit_label_value = DEFAULT_SUBMIT_LABEL
+
+    if "success_message" in submit_settings:
+        submit_success_value = str(submit_settings.get("success_message") or "")
+    else:
+        submit_success_value = DEFAULT_SUBMIT_SUCCESS_MESSAGE
+
+    show_introduction_value = bool(
+        page_settings.get("show_introduction")
+        if "show_introduction" in page_settings
+        else DEFAULT_SHOW_INTRODUCTION
+    )
+    show_debug_value = bool(
+        page_settings.get("show_debug_answers")
+        if "show_debug_answers" in page_settings
+        else DEFAULT_SHOW_DEBUG
+    )
+    debug_label_value = (
+        str(page_settings.get("debug_expander_label") or "")
+        if "debug_expander_label" in page_settings
+        else DEFAULT_DEBUG_LABEL
+    )
+    show_answers_summary_value = bool(
+        submit_settings.get("show_answers_summary")
+        if "show_answers_summary" in submit_settings
+        else DEFAULT_SHOW_ANSWERS_SUMMARY
+    )
+
+    st.subheader("Page content")
+    with st.form("page_content"):
+        page_title = st.text_input("Page title", value=page_title_value)
+        show_intro = st.checkbox(
+            "Show introduction", value=show_introduction_value
+        )
+        intro_heading = st.text_input(
+            "Introduction heading",
+            value=intro_heading_value,
+            help="Supports emoji and plain text.",
+        )
+        intro_paragraphs = st.text_area(
+            "Introduction paragraphs (one per line)",
+            value=intro_paragraphs_value,
+            help="Each line becomes a separate paragraph in the introduction card.",
+        )
+        submit_label = st.text_input("Submit button label", value=submit_label_value)
+        submit_success = st.text_area(
+            "Submission success message",
+            value=submit_success_value,
+        )
+        show_answers_summary = st.checkbox(
+            "Show answers after submission",
+            value=show_answers_summary_value,
+            help="Displays the captured answers below the success message.",
+        )
+        show_debug = st.checkbox(
+            "Show debug answers expander",
+            value=show_debug_value,
+            help="Controls whether the questionnaire page shows the answers expander.",
+        )
+        debug_label = st.text_input(
+            "Debug expander label",
+            value=debug_label_value,
+            help="Used as the label for the debug answers expander.",
+        )
+        submitted = st.form_submit_button("Save page content")
+
+        if submitted:
+            updated_page_settings = {
+                key: value
+                for key, value in page_settings.items()
+                if key
+                not in {
+                    "title",
+                    "show_introduction",
+                    "introduction",
+                    "show_debug_answers",
+                    "debug_expander_label",
+                    "submit",
+                }
+            }
+            updated_page_settings["title"] = page_title.strip() or DEFAULT_PAGE_TITLE
+            updated_page_settings["show_introduction"] = bool(show_intro)
+
+            if show_intro:
+                updated_intro = {
+                    key: value
+                    for key, value in introduction_settings.items()
+                    if key not in {"heading", "paragraphs"}
+                }
+                updated_intro["heading"] = intro_heading.strip()
+                raw_paragraphs = [line.rstrip() for line in intro_paragraphs.splitlines()]
+                updated_intro["paragraphs"] = [
+                    paragraph.strip()
+                    for paragraph in raw_paragraphs
+                    if paragraph.strip()
+                ]
+                updated_page_settings["introduction"] = updated_intro
+            else:
+                updated_page_settings.pop("introduction", None)
+
+            updated_page_settings["show_debug_answers"] = bool(show_debug)
+            if show_debug:
+                updated_page_settings["debug_expander_label"] = (
+                    debug_label.strip() or DEFAULT_DEBUG_LABEL
+                )
+            else:
+                updated_page_settings.pop("debug_expander_label", None)
+
+            preserved_submit = {
+                key: value
+                for key, value in submit_settings.items()
+                if key not in {"label", "success_message", "show_answers_summary"}
+            }
+            preserved_submit["label"] = submit_label.strip() or DEFAULT_SUBMIT_LABEL
+            preserved_submit["success_message"] = (
+                submit_success.strip() or DEFAULT_SUBMIT_SUCCESS_MESSAGE
+            )
+            preserved_submit["show_answers_summary"] = bool(show_answers_summary)
+            updated_page_settings["submit"] = preserved_submit
+
+            schema["page"] = updated_page_settings
+            st.session_state[SCHEMA_STATE_KEY] = schema
+            st.success("Page content updated. Use Publish or Save as Draft to persist changes.")
 
 def render_show_if_builder(schema: Dict[str, Any]) -> None:
     """Render a basic rule builder UI for question visibility."""
@@ -763,6 +937,9 @@ def main() -> None:
 
     schema = get_schema()
     questions = schema.get("questions", [])
+
+    render_page_content_editor(schema)
+    st.divider()
 
     with st.expander("Live Preview", expanded=False):
         preview_answers: Dict[str, Any] = st.session_state.setdefault(
