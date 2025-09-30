@@ -24,6 +24,11 @@
       "key": "system-type",
       "label": "Which system type are you registering?",
       "type": "text"
+    },
+    {
+      "key": "description",
+      "label": "Provide a description of the system",
+      "type": "text"
     }
   ],
   "meta": {
