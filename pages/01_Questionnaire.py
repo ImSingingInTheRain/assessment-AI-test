@@ -69,6 +69,7 @@ def _github_settings() -> Dict[str, Any]:
     api_url = secrets.get("api_url")
     forms_config = secrets.get("forms", [])
     submissions_path = secrets.get("system_registration_submissions_path")
+    assessment_submissions_path = secrets.get("assessment_submissions_path")
 
     configured_forms: List[str] = []
     if isinstance(forms_config, Sequence) and not isinstance(forms_config, (str, bytes)):
@@ -89,6 +90,11 @@ def _github_settings() -> Dict[str, Any]:
             "github_system_registration_submissions_path",
             st.secrets.get("system_registration_submissions_path", submissions_path),
         )
+    if not assessment_submissions_path:
+        assessment_submissions_path = st.secrets.get(
+            "github_assessment_submissions_path",
+            st.secrets.get("assessment_submissions_path", assessment_submissions_path),
+        )
 
     if repo and path:
         return {
@@ -99,6 +105,7 @@ def _github_settings() -> Dict[str, Any]:
             "forms": configured_forms,
             "api_url": api_url,
             "system_registration_submissions_path": submissions_path,
+            "assessment_submissions_path": assessment_submissions_path,
         }
     return {}
 
@@ -150,23 +157,56 @@ def load_schema_from_github() -> Dict[str, Any]:
 ANSWERS_STATE_KEY = "questionnaire_answers"
 QUESTIONNAIRE_QUERY_PARAM = "questionnaire"
 SYSTEM_REGISTRATION_KEY = "system_registration"
+ASSESSMENT_KEY = "assessment"
 DEFAULT_SYSTEM_REGISTRATION_SUBMISSIONS_PATH = (
     "system_registration/submissions/{submission_id}.json"
 )
+DEFAULT_ASSESSMENT_SUBMISSIONS_PATH = "assessment/submissions/{submission_id}.json"
+
+
+def _submission_storage_path(
+    *,
+    settings: Dict[str, Any],
+    submission_id: str,
+    template_key: str,
+    default_template: str,
+    error_subject: str,
+) -> Optional[str]:
+    """Format a storage path for a questionnaire submission."""
+
+    template = settings.get(template_key) or default_template
+    try:
+        return template.format(submission_id=submission_id)
+    except KeyError as exc:
+        st.error(
+            f"Invalid {error_subject} submissions path template; "
+            f"missing placeholder: {exc}."
+        )
+        return None
 
 
 def _system_registration_submission_path(settings: Dict[str, Any], submission_id: str) -> Optional[str]:
     """Build the storage path for a system registration submission."""
 
-    template = settings.get("system_registration_submissions_path") or DEFAULT_SYSTEM_REGISTRATION_SUBMISSIONS_PATH
-    try:
-        return template.format(submission_id=submission_id)
-    except KeyError as exc:
-        st.error(
-            "Invalid system registration submissions path template; "
-            f"missing placeholder: {exc}."
-        )
-        return None
+    return _submission_storage_path(
+        settings=settings,
+        submission_id=submission_id,
+        template_key="system_registration_submissions_path",
+        default_template=DEFAULT_SYSTEM_REGISTRATION_SUBMISSIONS_PATH,
+        error_subject="system registration",
+    )
+
+
+def _assessment_submission_path(settings: Dict[str, Any], submission_id: str) -> Optional[str]:
+    """Build the storage path for an assessment submission."""
+
+    return _submission_storage_path(
+        settings=settings,
+        submission_id=submission_id,
+        template_key="assessment_submissions_path",
+        default_template=DEFAULT_ASSESSMENT_SUBMISSIONS_PATH,
+        error_subject="assessment",
+    )
 
 
 def store_system_registration_submission(answers: Dict[str, Any]) -> Optional[str]:
@@ -215,6 +255,57 @@ def store_system_registration_submission(answers: Dict[str, Any]) -> Optional[st
         )
     except Exception as exc:  # pylint: disable=broad-except
         st.error(f"Failed to store system registration submission: {exc}")
+        return None
+
+    return submission_id
+
+
+def store_assessment_submission(answers: Dict[str, Any]) -> Optional[str]:
+    """Persist an assessment submission to GitHub and return its ID."""
+
+    settings = _github_settings()
+    token = settings.get("token")
+    repo = settings.get("repo")
+    branch = settings.get("branch", "main")
+    api_url = settings.get("api_url") or "https://api.github.com"
+
+    if not token or not repo:
+        st.error("GitHub configuration is required to store assessments.")
+        return None
+
+    submission_id = uuid.uuid4().hex
+    storage_path = _assessment_submission_path(settings, submission_id)
+    if not storage_path:
+        return None
+
+    try:
+        serialisable_answers = json.loads(json.dumps(answers))
+    except TypeError as exc:
+        st.error(f"Assessment answers are not serialisable: {exc}.")
+        return None
+
+    payload = {
+        "id": submission_id,
+        "questionnaire_key": ASSESSMENT_KEY,
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
+        "answers": serialisable_answers,
+    }
+
+    backend = GitHubBackend(
+        token=token,
+        repo=repo,
+        path=storage_path,
+        branch=branch,
+        api_url=api_url,
+    )
+
+    try:
+        backend.write_json(
+            payload,
+            message=f"Add assessment submission {submission_id}",
+        )
+    except Exception as exc:  # pylint: disable=broad-except
+        st.error(f"Failed to store assessment submission: {exc}")
         return None
 
     return submission_id
@@ -654,6 +745,10 @@ def main() -> None:
             submission_id = store_system_registration_submission(answers)
             if submission_id:
                 st.info(f"Submission saved with ID `{submission_id}`.")
+        elif selected_key == ASSESSMENT_KEY:
+            submission_id = store_assessment_submission(answers)
+            if submission_id:
+                st.info(f"Assessment saved with ID `{submission_id}`.")
 
         if show_answers_summary:
             st.json(answers)
