@@ -9,6 +9,8 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 import streamlit as st
 
+from lib.questionnaire_utils import RECORD_NAME_KEY
+
 SUBMISSIONS_DIR = Path("assessment/submissions")
 DEFAULT_TABLE_COLUMNS = ("Submission ID", "Submitted at", "Questionnaire")
 
@@ -42,6 +44,10 @@ def _load_submission(path: Path) -> Dict[str, Any]:
     timestamp, sort_key = _parse_timestamp(payload.get("submitted_at"))
     record["Submitted at"] = timestamp
     record["_sort_key"] = sort_key
+
+    record_name = payload.get(RECORD_NAME_KEY)
+    if isinstance(record_name, str) and record_name.strip():
+        record["Record name"] = record_name.strip()
 
     for key, value in answers.items():
         record[str(key)] = value

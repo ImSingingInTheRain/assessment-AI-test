@@ -9,16 +9,23 @@ __all__ = [
     "MULTI_FORM_FLAG",
     "EDITOR_SELECTED_STATE_KEY",
     "RUNNER_SELECTED_STATE_KEY",
+    "RECORD_NAME_FIELD",
+    "RECORD_NAME_KEY",
+    "RECORD_NAME_TYPE",
     "normalize_questionnaires",
     "questionnaire_choices",
     "get_questionnaire",
     "iter_questionnaires",
+    "extract_record_name",
 ]
 
 DEFAULT_QUESTIONNAIRE_KEY = "assessment"
 MULTI_FORM_FLAG = "_multi_form"
 EDITOR_SELECTED_STATE_KEY = "editor_selected_questionnaire"
 RUNNER_SELECTED_STATE_KEY = "runner_selected_questionnaire"
+RECORD_NAME_FIELD = "_record_name"
+RECORD_NAME_KEY = "record_name"
+RECORD_NAME_TYPE = "record_name"
 
 
 def _ensure_mapping(value: Any) -> Dict[str, Any]:
@@ -107,3 +114,27 @@ def iter_questionnaires(schema: Dict[str, Any]) -> Iterable[Tuple[str, Dict[str,
 
     questionnaires = normalize_questionnaires(schema)
     return questionnaires.items()
+
+
+def extract_record_name(questionnaire: Dict[str, Any], answers: Dict[str, Any]) -> str:
+    """Return the record name captured by ``questionnaire`` from ``answers``."""
+
+    questions = questionnaire.get("questions", [])
+    if isinstance(questions, list):
+        for question in questions:
+            if not isinstance(question, dict):
+                continue
+            if question.get("type") != RECORD_NAME_TYPE:
+                continue
+            key = question.get("key")
+            if not isinstance(key, str):
+                continue
+            value = answers.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+    value = answers.get(RECORD_NAME_FIELD)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+
+    return ""

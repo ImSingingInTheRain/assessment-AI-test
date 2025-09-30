@@ -23,6 +23,8 @@ from lib.github_backend import GitHubBackend, create_branch, ensure_pr, put_file
 from lib.form_store import load_combined_schema, local_form_path, resolve_remote_form_path
 from lib.questionnaire_utils import (
     EDITOR_SELECTED_STATE_KEY,
+    RECORD_NAME_FIELD,
+    RECORD_NAME_TYPE,
     normalize_questionnaires,
 )
 from lib.related_records import (
@@ -47,7 +49,24 @@ SCHEMA_SHA_STATE_KEY = "editor_schema_sha"
 DRAFT_BRANCH_STATE_KEY = "editor_draft_branch"
 FORM_SOURCES_STATE_KEY = "editor_form_sources"
 FORM_RAW_STATE_KEY = "editor_form_raw"
-QUESTION_TYPES = ["single", "multiselect", "bool", "text", "statement", "related_record"]
+QUESTION_TYPES = [
+    "single",
+    "multiselect",
+    "bool",
+    "text",
+    RECORD_NAME_TYPE,
+    "statement",
+    "related_record",
+]
+QUESTION_TYPE_LABELS = {
+    "single": "Single select",
+    "multiselect": "Multi select",
+    "bool": "Yes/No",
+    "text": "Free text",
+    RECORD_NAME_TYPE: "Name of the record",
+    "statement": "Statement",
+    "related_record": "Related record",
+}
 SHOW_IF_BUILDER_STATE_KEY = "editor_show_if_builder"
 
 
@@ -301,6 +320,7 @@ QUESTION_TYPE_OPERATORS: Dict[str, List[str]] = {
     "multiselect": ["includes", "not_includes", "any_selected", "all_selected", "contains_any"],
     "bool": ["is_true", "is_false"],
     "text": ["equals", "not_equals", "contains_any"],
+    RECORD_NAME_TYPE: ["equals", "not_equals", "contains_any"],
     "statement": ["always"],
 }
 DEFAULT_OPERATORS = ["equals", "not_equals", "contains_any"]
@@ -1689,7 +1709,7 @@ def render_preview_question(
             help=help_text,
         )
         answers[question_key] = selection
-    elif question_type == "text":
+    elif question_type in {"text", RECORD_NAME_TYPE}:
         default_text = "" if default_value is None else str(default_value)
         text_value = st.text_input(
             label,
@@ -1699,6 +1719,12 @@ def render_preview_question(
             help=help_text,
         )
         answers[question_key] = text_value
+        if question_type == RECORD_NAME_TYPE:
+            stripped = text_value.strip()
+            if stripped:
+                answers[RECORD_NAME_FIELD] = stripped
+            else:
+                answers.pop(RECORD_NAME_FIELD, None)
     elif question_type == "related_record":
         source_key = question.get("related_record_source")
         if not isinstance(source_key, str) or source_key not in RELATED_RECORD_SOURCES:
@@ -2029,6 +2055,7 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
                 options=QUESTION_TYPES,
                 index=default_type_index,
                 help="Determines how the answer is captured.",
+                format_func=lambda value: QUESTION_TYPE_LABELS.get(value, value),
             )
 
         related_record_source = render_related_record_settings(
@@ -2243,7 +2270,11 @@ def render_add_question(schema: Dict[str, Any]) -> None:
             "Question label",
             help="Displayed to respondents. Leave blank to reuse the key.",
         )
-        question_type = st.selectbox("Answer type", options=QUESTION_TYPES)
+        question_type = st.selectbox(
+            "Answer type",
+            options=QUESTION_TYPES,
+            format_func=lambda value: QUESTION_TYPE_LABELS.get(value, value),
+        )
 
         related_record_source = render_related_record_settings(
             form_key, question_type, None

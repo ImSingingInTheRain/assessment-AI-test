@@ -23,7 +23,11 @@ from lib.form_store import (
 from lib.github_backend import GitHubBackend
 from lib.questionnaire_utils import (
     DEFAULT_QUESTIONNAIRE_KEY,
+    RECORD_NAME_FIELD,
+    RECORD_NAME_KEY,
+    RECORD_NAME_TYPE,
     RUNNER_SELECTED_STATE_KEY,
+    extract_record_name,
     normalize_questionnaires,
 )
 from lib.related_records import (
@@ -214,7 +218,11 @@ def _assessment_submission_path(settings: Dict[str, Any], submission_id: str) ->
     )
 
 
-def store_system_registration_submission(answers: Dict[str, Any]) -> Optional[str]:
+def store_system_registration_submission(
+    answers: Dict[str, Any],
+    *,
+    record_name: Optional[str] = None,
+) -> Optional[str]:
     """Persist a system registration submission to GitHub and return its ID."""
 
     settings = _github_settings()
@@ -238,12 +246,26 @@ def store_system_registration_submission(answers: Dict[str, Any]) -> Optional[st
         st.error(f"System registration answers are not serialisable: {exc}.")
         return None
 
+    if isinstance(serialisable_answers, dict):
+        extracted_name = serialisable_answers.pop(RECORD_NAME_FIELD, None)
+    else:
+        extracted_name = None
+
+    record_name_value = record_name or extracted_name
+    if isinstance(record_name_value, str):
+        record_name_value = record_name_value.strip()
+    else:
+        record_name_value = ""
+
     payload = {
         "id": submission_id,
         "questionnaire_key": SYSTEM_REGISTRATION_KEY,
         "submitted_at": datetime.now(timezone.utc).isoformat(),
         "answers": serialisable_answers,
     }
+
+    if record_name_value:
+        payload[RECORD_NAME_KEY] = record_name_value
 
     backend = GitHubBackend(
         token=token,
@@ -265,7 +287,11 @@ def store_system_registration_submission(answers: Dict[str, Any]) -> Optional[st
     return submission_id
 
 
-def store_assessment_submission(answers: Dict[str, Any]) -> Optional[str]:
+def store_assessment_submission(
+    answers: Dict[str, Any],
+    *,
+    record_name: Optional[str] = None,
+) -> Optional[str]:
     """Persist an assessment submission to GitHub and return its ID."""
 
     settings = _github_settings()
@@ -289,12 +315,26 @@ def store_assessment_submission(answers: Dict[str, Any]) -> Optional[str]:
         st.error(f"Assessment answers are not serialisable: {exc}.")
         return None
 
+    if isinstance(serialisable_answers, dict):
+        extracted_name = serialisable_answers.pop(RECORD_NAME_FIELD, None)
+    else:
+        extracted_name = None
+
+    record_name_value = record_name or extracted_name
+    if isinstance(record_name_value, str):
+        record_name_value = record_name_value.strip()
+    else:
+        record_name_value = ""
+
     payload = {
         "id": submission_id,
         "questionnaire_key": ASSESSMENT_KEY,
         "submitted_at": datetime.now(timezone.utc).isoformat(),
         "answers": serialisable_answers,
     }
+
+    if record_name_value:
+        payload[RECORD_NAME_KEY] = record_name_value
 
     backend = GitHubBackend(
         token=token,
@@ -516,7 +556,7 @@ def render_question(
             label_visibility="hidden",
         )
         answers[question_key] = selection
-    elif question_type == "text":
+    elif question_type in {"text", RECORD_NAME_TYPE}:
         default_text = "" if default_value is None else str(default_value)
         text_value = st.text_input(
             label,
@@ -526,6 +566,12 @@ def render_question(
             label_visibility="collapsed",
         )
         answers[question_key] = text_value
+        if question_type == RECORD_NAME_TYPE:
+            stripped = text_value.strip()
+            if stripped:
+                answers[RECORD_NAME_FIELD] = stripped
+            else:
+                answers.pop(RECORD_NAME_FIELD, None)
     elif question_type == "related_record":
         source_key = question.get("related_record_source")
         if not isinstance(source_key, str) or source_key not in RELATED_RECORD_SOURCES:
@@ -746,6 +792,8 @@ def main() -> None:
     answers_state[selected_key] = answers
     st.session_state[ANSWERS_STATE_KEY] = answers_state
 
+    record_name = extract_record_name(selected_questionnaire, answers)
+
     submit_settings = (
         page_settings.get("submit")
         if isinstance(page_settings.get("submit"), dict)
@@ -786,11 +834,17 @@ def main() -> None:
         st.success(submit_success_message)
 
         if selected_key == SYSTEM_REGISTRATION_KEY:
-            submission_id = store_system_registration_submission(answers)
+            submission_id = store_system_registration_submission(
+                answers,
+                record_name=record_name,
+            )
             if submission_id:
                 st.info(f"Submission saved with ID `{submission_id}`.")
         elif selected_key == ASSESSMENT_KEY:
-            submission_id = store_assessment_submission(answers)
+            submission_id = store_assessment_submission(
+                answers,
+                record_name=record_name,
+            )
             if submission_id:
                 st.info(f"Assessment saved with ID `{submission_id}`.")
 

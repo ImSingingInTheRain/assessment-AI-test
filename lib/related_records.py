@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
+from lib.questionnaire_utils import RECORD_NAME_KEY
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 RELATED_RECORD_SOURCES: Dict[str, str] = {
@@ -69,7 +71,19 @@ def load_related_record_options(source: str) -> List[Tuple[str, str]]:
 
         submission_id = str(payload.get("id") or submission_file.stem)
         timestamp_text, sort_key = _parse_timestamp(payload.get("submitted_at"))
-        label = submission_id if not timestamp_text else f"{submission_id} · {timestamp_text}"
+        record_name = payload.get(RECORD_NAME_KEY)
+        if isinstance(record_name, str):
+            record_name = record_name.strip()
+        else:
+            record_name = ""
+
+        label_parts = []
+        if record_name:
+            label_parts.append(record_name)
+        label_parts.append(submission_id)
+        if timestamp_text:
+            label_parts.append(timestamp_text)
+        label = " · ".join(part for part in label_parts if part)
 
         existing = records.get(submission_id)
         if existing is None or sort_key > existing[2]:
