@@ -4,12 +4,24 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from html import escape as html_escape
 from typing import Any, Dict, List, Optional, Sequence
 
 import requests
 import streamlit as st
 
 from Home import load_schema
+from lib.schema_defaults import (
+    DEFAULT_DEBUG_LABEL,
+    DEFAULT_INTRO_HEADING,
+    DEFAULT_PAGE_TITLE,
+    DEFAULT_SHOW_ANSWERS_SUMMARY,
+    DEFAULT_SHOW_DEBUG,
+    DEFAULT_SHOW_INTRODUCTION,
+    DEFAULT_SUBMIT_LABEL,
+    DEFAULT_SUBMIT_SUCCESS_MESSAGE,
+    intro_paragraphs_list,
+)
 
 
 @dataclass(frozen=True)
@@ -82,6 +94,19 @@ def load_schema_from_github() -> Dict[str, Any]:
     return json.loads(contents)
 
 ANSWERS_STATE_KEY = "answers"
+
+
+def _normalise_paragraphs(value: Any) -> List[str]:
+    """Convert a stored paragraphs value into a clean list of strings."""
+
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    return []
 
 
 def eval_clause(clause: Dict[str, Any], answers: Dict[str, Any]) -> bool:
@@ -263,8 +288,6 @@ def render_question(
 def main() -> None:
     """Render the questionnaire page."""
 
-    st.title("Questionnaire")
-
     st.markdown(
         """
         <style>
@@ -321,17 +344,6 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    st.markdown(
-        """
-        <div class="questionnaire-intro">
-            <h2>👋 Welcome!</h2>
-            <p>Please answer the questions below so we can tailor the experience to you.</p>
-            <p>Questions may appear or disappear automatically depending on your responses.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
     schema: Dict[str, Any] = {}
     github_error: Optional[str] = None
     try:
@@ -361,6 +373,37 @@ def main() -> None:
         st.error("Schema failed to load. Please check form_schema.json.")
         return
 
+    page_settings = schema.get("page") if isinstance(schema.get("page"), dict) else {}
+    st.title(str(page_settings.get("title")) or DEFAULT_PAGE_TITLE)
+
+    show_introduction = page_settings.get("show_introduction")
+    if show_introduction is None:
+        show_introduction = DEFAULT_SHOW_INTRODUCTION
+
+    introduction_settings = (
+        page_settings.get("introduction")
+        if isinstance(page_settings.get("introduction"), dict)
+        else {}
+    )
+    heading = (
+        str(introduction_settings.get("heading") or "")
+        if "heading" in introduction_settings
+        else DEFAULT_INTRO_HEADING
+    )
+    if "paragraphs" in introduction_settings:
+        paragraphs = _normalise_paragraphs(introduction_settings.get("paragraphs"))
+    else:
+        paragraphs = intro_paragraphs_list()
+
+    if show_introduction and (heading or paragraphs):
+        intro_parts = ["<div class=\"questionnaire-intro\">"]
+        if heading:
+            intro_parts.append(f"<h2>{html_escape(heading)}</h2>")
+        for paragraph in paragraphs:
+            intro_parts.append(f"<p>{html_escape(paragraph)}</p>")
+        intro_parts.append("</div>")
+        st.markdown("\n".join(intro_parts), unsafe_allow_html=True)
+
     questions = schema.get("questions", [])
     if not questions:
         st.info("No questions defined in the schema yet.")
@@ -373,12 +416,46 @@ def main() -> None:
 
     st.session_state[ANSWERS_STATE_KEY] = answers
 
-    with st.expander("Debug: current answers", expanded=False):
-        st.json(st.session_state[ANSWERS_STATE_KEY])
+    submit_settings = (
+        page_settings.get("submit")
+        if isinstance(page_settings.get("submit"), dict)
+        else {}
+    )
+    submit_label = (
+        str(submit_settings.get("label") or DEFAULT_SUBMIT_LABEL)
+        if "label" in submit_settings
+        else DEFAULT_SUBMIT_LABEL
+    )
+    submit_success_message = (
+        str(submit_settings.get("success_message") or DEFAULT_SUBMIT_SUCCESS_MESSAGE)
+        if "success_message" in submit_settings
+        else DEFAULT_SUBMIT_SUCCESS_MESSAGE
+    )
+    show_answers_summary = submit_settings.get("show_answers_summary")
+    if show_answers_summary is None:
+        show_answers_summary = DEFAULT_SHOW_ANSWERS_SUMMARY
+    else:
+        show_answers_summary = bool(show_answers_summary)
 
-    if st.button("Submit questionnaire"):
-        st.success("Responses captured. Persistence will be wired via GitHub.")
-        st.json(answers)
+    show_debug_answers = page_settings.get("show_debug_answers")
+    if show_debug_answers is None:
+        show_debug_answers = DEFAULT_SHOW_DEBUG
+    else:
+        show_debug_answers = bool(show_debug_answers)
+
+    if show_debug_answers:
+        debug_label = (
+            str(page_settings.get("debug_expander_label") or DEFAULT_DEBUG_LABEL)
+            if "debug_expander_label" in page_settings
+            else DEFAULT_DEBUG_LABEL
+        )
+        with st.expander(debug_label, expanded=False):
+            st.json(st.session_state[ANSWERS_STATE_KEY])
+
+    if st.button(submit_label):
+        st.success(submit_success_message)
+        if show_answers_summary:
+            st.json(answers)
 
 
 if __name__ == "__main__":
