@@ -89,6 +89,15 @@
           }
         ]
       }
+    },
+    {
+      "key": "rd-exception",
+      "label": "Is the AI developed only for R&D?",
+      "type": "single",
+      "options": [
+        "Yes",
+        "No"
+      ]
     }
   ]
 }
