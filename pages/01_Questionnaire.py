@@ -34,6 +34,7 @@ normalize_questionnaires = questionnaire_utils.normalize_questionnaires
 RECORD_NAME_FIELD = getattr(questionnaire_utils, "RECORD_NAME_FIELD", "_record_name")
 RECORD_NAME_KEY = getattr(questionnaire_utils, "RECORD_NAME_KEY", "record_name")
 RECORD_NAME_TYPE = getattr(questionnaire_utils, "RECORD_NAME_TYPE", "record_name")
+UNSELECTED_LABEL = "— Select an option —"
 
 
 def _fallback_extract_record_name(
@@ -492,6 +493,61 @@ def should_show_question(question: Dict[str, Any], answers: Dict[str, Any]) -> b
     return eval_rule(show_if, answers)
 
 
+def _is_required_question(question: Dict[str, Any]) -> bool:
+    """Return ``True`` if the question should enforce a response."""
+
+    return bool(question.get("required")) and question.get("type") != "statement"
+
+
+def _has_required_answer(question: Dict[str, Any], answers: Dict[str, Any]) -> bool:
+    """Check whether ``answers`` contains a valid response for ``question``."""
+
+    key = question.get("key")
+    if not isinstance(key, str) or not key:
+        return True
+
+    value = answers.get(key)
+    question_type = question.get("type")
+
+    if question_type == "single":
+        options = [option for option in question.get("options", []) if isinstance(option, str)]
+        return isinstance(value, str) and value in options
+
+    if question_type == "multiselect":
+        return isinstance(value, list) and bool(value)
+
+    if question_type in {"text", RECORD_NAME_TYPE}:
+        return isinstance(value, str) and value.strip() != ""
+
+    if question_type == "bool":
+        return key in answers
+
+    if question_type == "related_record":
+        return isinstance(value, str) and value != ""
+
+    return True
+
+
+def collect_missing_required_questions(
+    questionnaire: Dict[str, Any], answers: Dict[str, Any]
+) -> List[str]:
+    """Return labels for required questions without answers."""
+
+    missing: List[str] = []
+    for question in questionnaire.get("questions", []) or []:
+        if not isinstance(question, dict):
+            continue
+        if not _is_required_question(question):
+            continue
+        if not should_show_question(question, answers):
+            continue
+        if not _has_required_answer(question, answers):
+            label = question.get("label")
+            key = question.get("key")
+            missing.append(label or key or "Unnamed question")
+    return missing
+
+
 def _get_query_param(name: str) -> Optional[str]:
     """Return the first query parameter value if present."""
 
@@ -534,6 +590,7 @@ def render_question(
     label = question.get("label", question_key)
     help_text = question.get("help")
     default_value = answers.get(question_key, question.get("default"))
+    required = bool(question.get("required")) and question_type != "statement"
 
     if question_type == "statement":
         question_intro = "Statement"
@@ -548,7 +605,7 @@ def render_question(
         f"""
         <div class="question-header">
             <span class="question-step">{question_intro}</span>
-            <h3>{label}</h3>
+            <h3>{label}{' *' if required else ''}</h3>
         </div>
         {f'<p class="question-help">{help_text}</p>' if help_text else ''}
         """,
@@ -556,30 +613,47 @@ def render_question(
     )
 
     if question_type == "single":
-        options: List[str] = question.get("options", [])
+        options: List[str] = [option for option in question.get("options", []) if isinstance(option, str)]
         if not options:
             st.warning(f"Question '{question_key}' has no options configured.")
             st.markdown("</div>", unsafe_allow_html=True)
             return
-        if default_value not in options:
-            default_value = options[0]
-        index = options.index(default_value) if default_value in options else 0
+        choices = [UNSELECTED_LABEL, *options]
+        if widget_key in st.session_state and st.session_state[widget_key] not in choices:
+            st.session_state.pop(widget_key)
+        default_choice = answers.get(question_key)
+        if not isinstance(default_choice, str) or default_choice not in options:
+            default_choice = (
+                default_value if isinstance(default_value, str) and default_value in options else UNSELECTED_LABEL
+            )
+        index = choices.index(default_choice)
         selection = st.radio(
             label,
-            options,
+            choices,
             index=index,
             key=widget_key,
             label_visibility="collapsed",
         )
-        answers[question_key] = selection
+        if selection == UNSELECTED_LABEL:
+            answers.pop(question_key, None)
+        else:
+            answers[question_key] = selection
     elif question_type == "multiselect":
-        options = question.get("options", [])
-        if not isinstance(default_value, list):
-            default_value = question.get("default", [])
+        options = [option for option in question.get("options", []) if isinstance(option, str)]
+        if not options:
+            st.warning(f"Question '{question_key}' has no options configured.")
+            st.markdown("</div>", unsafe_allow_html=True)
+            return
+        if isinstance(default_value, list):
+            default_selection = [value for value in default_value if value in options]
+        elif isinstance(question.get("default"), list):
+            default_selection = [value for value in question.get("default", []) if value in options]
+        else:
+            default_selection = []
         selections = st.multiselect(
             label,
             options=options,
-            default=default_value,
+            default=default_selection,
             key=widget_key,
             label_visibility="collapsed",
         )
@@ -635,19 +709,32 @@ def render_question(
         option_values = [value for value, _ in options]
         labels = {value: label for value, label in options}
         default_option = default_value if isinstance(default_value, str) else None
-        if default_option not in option_values:
-            default_option = option_values[0]
-        index = option_values.index(default_option)
+        if widget_key in st.session_state and st.session_state[widget_key] not in option_values + [UNSELECTED_LABEL]:
+            st.session_state.pop(widget_key)
+        choices = [UNSELECTED_LABEL, *option_values]
+        current_selection = answers.get(question_key)
+        if isinstance(current_selection, str) and current_selection in option_values:
+            default_option = current_selection
+        elif isinstance(default_option, str) and default_option in option_values:
+            default_option = default_option
+        else:
+            default_option = UNSELECTED_LABEL
+        index = choices.index(default_option)
         selection = st.selectbox(
             label,
-            options=option_values,
+            options=choices,
             index=index,
             key=widget_key,
             label_visibility="collapsed",
-            format_func=lambda value: labels.get(value, value),
+            format_func=lambda value: labels.get(value, value)
+            if value != UNSELECTED_LABEL
+            else UNSELECTED_LABEL,
         )
-        answers[question_key] = selection
-        st.caption(f"Selected record ID: `{selection}`")
+        if selection == UNSELECTED_LABEL:
+            answers.pop(question_key, None)
+        else:
+            answers[question_key] = selection
+            st.caption(f"Selected record ID: `{selection}`")
     elif question_type == "statement":
         answers.pop(question_key, None)
         if widget_key in st.session_state:
@@ -868,6 +955,12 @@ def main() -> None:
             st.json(answers)
 
     if st.button(submit_label, key=f"submit_{selected_key}"):
+        missing_required = collect_missing_required_questions(selected_questionnaire, answers)
+        if missing_required:
+            st.error("Please answer all required questions before submitting.")
+            st.markdown("\n".join(f"- {label}" for label in missing_required))
+            return
+
         st.success(submit_success_message)
 
         if selected_key == SYSTEM_REGISTRATION_KEY:
