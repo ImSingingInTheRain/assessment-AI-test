@@ -31,7 +31,67 @@ SCHEMA_SHA_STATE_KEY = "editor_schema_sha"
 DRAFT_BRANCH_STATE_KEY = "editor_draft_branch"
 QUESTION_TYPES = ["single", "multiselect", "bool", "text"]
 SHOW_IF_BUILDER_STATE_KEY = "editor_show_if_builder"
-LIST_OPERATORS = {"in", "not_in", "contains_any", "contains_all", "one_of"}
+
+OPERATOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
+    "equals": {
+        "label": "Equals",
+        "description": "Matches when the referenced answer exactly equals the chosen value.",
+        "value_mode": "single",
+    },
+    "not_equals": {
+        "label": "Does not equal",
+        "description": "Matches when the referenced answer differs from the chosen value.",
+        "value_mode": "single",
+    },
+    "includes": {
+        "label": "Includes",
+        "description": "Matches when the answer contains the chosen value.",
+        "value_mode": "single",
+    },
+    "not_includes": {
+        "label": "Does not include",
+        "description": "Matches when the answer does not contain the chosen value.",
+        "value_mode": "single",
+    },
+    "any_selected": {
+        "label": "Matches any of",
+        "description": "Matches when any of the selected values are chosen.",
+        "value_mode": "multi",
+    },
+    "contains_any": {
+        "label": "Contains any of",
+        "description": "Matches when the answer contains any of the provided values.",
+        "value_mode": "multi",
+    },
+    "all_selected": {
+        "label": "Matches all of",
+        "description": "Matches when all provided values are selected.",
+        "value_mode": "multi",
+    },
+    "is_true": {
+        "label": "Is true",
+        "description": "Matches when the referenced answer is true.",
+        "value_mode": "none",
+    },
+    "is_false": {
+        "label": "Is false",
+        "description": "Matches when the referenced answer is false.",
+        "value_mode": "none",
+    },
+    "always": {
+        "label": "Always",
+        "description": "Always matches regardless of other answers.",
+        "value_mode": "none",
+    },
+}
+
+QUESTION_TYPE_OPERATORS: Dict[str, List[str]] = {
+    "single": ["equals", "not_equals"],
+    "multiselect": ["includes", "not_includes", "any_selected", "all_selected", "contains_any"],
+    "bool": ["is_true", "is_false"],
+    "text": ["equals", "not_equals", "contains_any"],
+}
+DEFAULT_OPERATORS = ["equals", "not_equals", "contains_any"]
 PREVIEW_ANSWERS_STATE_KEY = "editor_preview_answers"
 
 
@@ -253,6 +313,51 @@ def sync_show_if_builder_state(schema: Dict[str, Any]) -> Dict[str, Dict[str, An
     return builder_state
 
 
+def _question_lookup(questions: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Return a lookup dictionary keyed by question key."""
+
+    lookup: Dict[str, Dict[str, Any]] = {}
+    for question in questions:
+        key = question.get("key")
+        if isinstance(key, str) and key:
+            lookup[key] = question
+    return lookup
+
+
+def _operator_options(question: Optional[Dict[str, Any]]) -> List[str]:
+    """Return operator keys applicable to the referenced question."""
+
+    if not question:
+        return ["always"]
+
+    question_type = question.get("type")
+    operators = QUESTION_TYPE_OPERATORS.get(str(question_type), DEFAULT_OPERATORS)
+    return operators or DEFAULT_OPERATORS
+
+
+def _format_question_option(key: str, lookup: Dict[str, Dict[str, Any]]) -> str:
+    """Return a user-friendly label for a question selection option."""
+
+    if not key:
+        return "Always (no condition)"
+
+    question = lookup.get(key, {})
+    label = question.get("label")
+    if isinstance(label, str) and label:
+        return f"{label} ({key})"
+    return key
+
+
+def _format_clause_value(value: Any) -> str:
+    """Return a readable representation of a clause value."""
+
+    if value is None or value == "":
+        return "—"
+    if isinstance(value, (list, tuple, set)):
+        return ", ".join(str(item) for item in value)
+    return str(value)
+
+
 def render_page_content_editor(schema: Dict[str, Any]) -> None:
     """Render controls for editing questionnaire page content."""
 
@@ -417,7 +522,7 @@ def render_page_content_editor(schema: Dict[str, Any]) -> None:
             st.success("Page content updated. Use Publish or Save as Draft to persist changes.")
 
 def render_show_if_builder(schema: Dict[str, Any]) -> None:
-    """Render a basic rule builder UI for question visibility."""
+    """Render a guided rule builder UI for question visibility."""
 
     st.subheader("Show rule builder")
 
@@ -433,13 +538,16 @@ def render_show_if_builder(schema: Dict[str, Any]) -> None:
         st.info("Questions require keys before rules can be created.")
         return
 
+    lookup = _question_lookup(questions)
+
     target_key = st.selectbox(
         "Select the question to control visibility for",
         options=question_keys,
         key="show_if_target_question",
+        format_func=lambda key: _format_question_option(key, lookup),
     )
 
-    target_question = next((q for q in questions if q.get("key") == target_key), None)
+    target_question = lookup.get(target_key)
     if target_question is None:
         return
 
@@ -472,40 +580,153 @@ def render_show_if_builder(schema: Dict[str, Any]) -> None:
     st.session_state[SCHEMA_STATE_KEY] = schema
 
     clause_question_options = [key for key in question_keys if key != target_key] or question_keys
-    clause_field = st.selectbox(
-        "Clause question",
-        options=clause_question_options,
-        key=f"show_if_clause_field_{target_key}",
-    )
-    operator = st.text_input(
-        "Operator",
-        key=f"show_if_operator_{target_key}",
-        help="Examples: equals, in, is_true, contains_any",
-    )
-    value_input = st.text_input(
-        "Value",
-        key=f"show_if_value_{target_key}",
-        help="For list operators provide comma-separated values. Leave blank for operators without a value.",
-    )
+    field_options = [""] + clause_question_options
+    field_state_key = f"show_if_clause_field_{target_key}"
+    if field_state_key not in st.session_state:
+        st.session_state[field_state_key] = field_options[1] if len(field_options) > 1 else ""
+    if st.session_state[field_state_key] not in field_options:
+        st.session_state[field_state_key] = field_options[0]
+
+    selector_col, operator_col = st.columns([2, 2])
+    with selector_col:
+        clause_field_key = st.selectbox(
+            "When this question",
+            options=field_options,
+            index=field_options.index(st.session_state[field_state_key]),
+            key=field_state_key,
+            format_func=lambda key: _format_question_option(key, lookup),
+        )
+
+    referenced_question = lookup.get(clause_field_key) if clause_field_key else None
+
+    operator_options = _operator_options(referenced_question)
+    operator_state_key = f"show_if_operator_{target_key}"
+    if operator_state_key not in st.session_state:
+        st.session_state[operator_state_key] = operator_options[0]
+    if st.session_state[operator_state_key] not in operator_options:
+        st.session_state[operator_state_key] = operator_options[0]
+
+    with operator_col:
+        selected_operator = st.selectbox(
+            "Condition",
+            options=operator_options,
+            index=operator_options.index(st.session_state[operator_state_key]),
+            key=operator_state_key,
+            format_func=lambda op: OPERATOR_DEFINITIONS.get(op, {}).get("label", op),
+        )
+        operator_definition = OPERATOR_DEFINITIONS.get(selected_operator, {})
+        operator_description = operator_definition.get("description")
+        if operator_description:
+            st.caption(operator_description)
+
+    value_mode = operator_definition.get("value_mode", "none")
+    value: Any = None
+    value_valid = True
+
+    if value_mode == "single":
+        value_options: List[str] = []
+        if referenced_question:
+            reference_options = referenced_question.get("options")
+            if isinstance(reference_options, list):
+                value_options = [str(option) for option in reference_options if isinstance(option, str)]
+
+        if value_options:
+            value_single_key = f"show_if_value_single_{target_key}"
+            if value_single_key not in st.session_state:
+                st.session_state[value_single_key] = value_options[0]
+            if st.session_state[value_single_key] not in value_options:
+                st.session_state[value_single_key] = value_options[0]
+            value = st.selectbox(
+                "Value",
+                options=value_options,
+                index=value_options.index(st.session_state[value_single_key]),
+                key=value_single_key,
+            )
+        else:
+            value = st.text_input(
+                "Value",
+                key=f"show_if_value_text_{target_key}",
+                placeholder="Enter a value to compare against",
+            )
+            value_valid = bool(str(value).strip())
+    elif value_mode == "multi":
+        value_options = []
+        if referenced_question:
+            reference_options = referenced_question.get("options")
+            if isinstance(reference_options, list):
+                value_options = [str(option) for option in reference_options if isinstance(option, str)]
+
+        if value_options:
+            value_multi_key = f"show_if_value_multi_{target_key}"
+            if value_multi_key not in st.session_state:
+                st.session_state[value_multi_key] = []
+            if st.session_state[value_multi_key]:
+                st.session_state[value_multi_key] = [
+                    option for option in st.session_state[value_multi_key] if option in value_options
+                ]
+            value = st.multiselect(
+                "Values",
+                options=value_options,
+                default=st.session_state[value_multi_key],
+                key=value_multi_key,
+                help="Choose one or more values that should match.",
+            )
+            value_valid = bool(value)
+        else:
+            value_rows_key = f"show_if_value_rows_{target_key}"
+            existing_rows = st.session_state.get(value_rows_key)
+            if existing_rows is None:
+                default_rows: Sequence[Any] = [{"Value": ""}]
+            else:
+                default_rows = existing_rows
+            value_rows = st.data_editor(
+                default_rows,
+                num_rows="dynamic",
+                hide_index=True,
+                key=value_rows_key,
+                use_container_width=True,
+            )
+
+            rows_iterable: Sequence[Any]
+            if hasattr(value_rows, "to_dict"):
+                rows_iterable = value_rows.to_dict(orient="records")  # type: ignore[call-arg]
+            elif isinstance(value_rows, list):
+                rows_iterable = value_rows
+            else:
+                rows_iterable = []
+
+            extracted: List[str] = []
+            for row in rows_iterable:
+                if isinstance(row, dict):
+                    raw_value = str(row.get("Value", "")).strip()
+                else:
+                    raw_value = str(row).strip()
+                if raw_value:
+                    extracted.append(raw_value)
+
+            value = extracted
+            value_valid = bool(extracted)
+            if not extracted:
+                st.info("Add at least one value for this condition.")
 
     if st.button("Add clause", key=f"show_if_add_clause_{target_key}"):
-        if not clause_field:
+        if selected_operator != "always" and not clause_field_key:
             st.error("Select a question to reference in the clause.")
-        elif not operator.strip():
-            st.error("Operator is required.")
+        elif value_mode == "single" and not value_valid:
+            st.error("Provide a value to compare against.")
+        elif value_mode == "multi" and not value_valid:
+            st.error("Provide at least one value for this condition.")
         else:
-            trimmed_operator = operator.strip()
-            values = [segment.strip() for segment in value_input.split(",") if segment.strip()]
-
-            clause: Dict[str, Any] = {
-                "field": clause_field,
-                "operator": trimmed_operator,
-            }
-            if trimmed_operator in LIST_OPERATORS or len(values) > 1:
-                if values:
-                    clause["value"] = values
-            elif values:
-                clause["value"] = values[0]
+            clause: Dict[str, Any] = {"operator": selected_operator}
+            if clause_field_key:
+                clause["field"] = clause_field_key
+            if value_mode == "single":
+                clause_value = value
+                if isinstance(clause_value, str):
+                    clause_value = clause_value.strip()
+                clause["value"] = clause_value
+            elif value_mode == "multi":
+                clause["value"] = value
 
             target_state[selected_bucket].append(clause)
             if target_state[selected_bucket]:
@@ -516,16 +737,33 @@ def render_show_if_builder(schema: Dict[str, Any]) -> None:
                 target_question.pop("show_if", None)
 
             st.session_state[SCHEMA_STATE_KEY] = schema
-            st.session_state[f"show_if_value_{target_key}"] = ""
-            st.session_state[f"show_if_operator_{target_key}"] = ""
+            st.session_state.pop(f"show_if_value_text_{target_key}", None)
+            st.session_state.pop(f"show_if_value_single_{target_key}", None)
+            st.session_state.pop(f"show_if_value_multi_{target_key}", None)
+            st.session_state.pop(f"show_if_value_rows_{target_key}", None)
             st.success("Clause added.")
 
     if target_state[selected_bucket]:
         st.markdown("**Current clauses**")
         for idx, clause in enumerate(target_state[selected_bucket]):
-            clause_col, remove_col = st.columns([4, 1])
+            field_label = _format_question_option(
+                str(clause.get("field", "") or ""),
+                lookup,
+            )
+            operator_label = OPERATOR_DEFINITIONS.get(
+                clause.get("operator", ""),
+                {},
+            ).get("label", clause.get("operator", ""))
+            value_label = _format_clause_value(clause.get("value"))
+
+            clause_col, remove_col = st.columns([6, 1])
             with clause_col:
-                st.json(clause)
+                header = operator_label
+                if clause.get("field"):
+                    header = f"{field_label} · {operator_label}"
+                st.markdown(f"**{header}**")
+                if value_label != "—":
+                    st.caption(f"Value: {value_label}")
             with remove_col:
                 if st.button("Remove", key=f"remove_clause_{target_key}_{selected_bucket}_{idx}"):
                     target_state[selected_bucket].pop(idx)
