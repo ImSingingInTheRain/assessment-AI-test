@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Tuple
 
 DEFAULT_QUESTIONNAIRE_KEY = "assessment"
+MULTI_FORM_FLAG = "_multi_form"
 EDITOR_SELECTED_STATE_KEY = "editor_selected_questionnaire"
 RUNNER_SELECTED_STATE_KEY = "runner_selected_questionnaire"
 
@@ -43,6 +44,12 @@ def normalize_questionnaires(schema: Dict[str, Any]) -> Dict[str, Dict[str, Any]
         return {}
 
     questionnaires = schema.get("questionnaires")
+    multi_form = bool(schema.get(MULTI_FORM_FLAG))
+
+    if isinstance(questionnaires, dict) and not questionnaires and multi_form:
+        schema["questionnaires"] = {}
+        return {}
+
     if not isinstance(questionnaires, dict) or not questionnaires:
         page_settings = _ensure_mapping(schema.get("page"))
         questions = _ensure_sequence(schema.get("questions"))

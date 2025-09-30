@@ -12,6 +12,12 @@ import requests
 import streamlit as st
 
 from Home import load_schema
+from lib.form_store import (
+    available_form_keys,
+    combine_forms,
+    forms_from_payloads,
+    resolve_remote_form_path,
+)
 from lib.questionnaire_utils import (
     DEFAULT_QUESTIONNAIRE_KEY,
     RUNNER_SELECTED_STATE_KEY,
@@ -54,18 +60,33 @@ def _github_settings() -> Dict[str, Any]:
 
     secrets = _secrets_dict("github")
     repo = secrets.get("repo")
-    path = secrets.get("path", "form_schema.json")
+    path = secrets.get("path", "form_schemas/{form_key}/form_schema.json")
     branch = secrets.get("branch", "main")
     token = secrets.get("token")
+    forms_config = secrets.get("forms", [])
+
+    configured_forms: List[str] = []
+    if isinstance(forms_config, Sequence) and not isinstance(forms_config, (str, bytes)):
+        configured_forms = [str(item).strip() for item in forms_config if str(item).strip()]
 
     if not (repo and path):
         repo = st.secrets.get("github_repo", repo)
         path = st.secrets.get("github_file_path", path)
         branch = st.secrets.get("github_branch", branch)
         token = st.secrets.get("github_token", token)
+    if not configured_forms:
+        secrets_forms = st.secrets.get("github_forms")
+        if isinstance(secrets_forms, Sequence) and not isinstance(secrets_forms, (str, bytes)):
+            configured_forms = [str(item).strip() for item in secrets_forms if str(item).strip()]
 
     if repo and path:
-        return {"repo": repo, "path": path, "branch": branch, "token": token}
+        return {
+            "repo": repo,
+            "path": path,
+            "branch": branch,
+            "token": token,
+            "forms": configured_forms,
+        }
     return {}
 
 
@@ -91,13 +112,27 @@ def load_schema_from_github() -> Dict[str, Any]:
     path = github_settings.get("path")
     ref = github_settings.get("branch", "main")
     token = github_settings.get("token")
+    configured_forms = github_settings.get("forms") or []
 
     if not repo or not path:
         return {}
 
-    config = GHConfig(repo=repo, path=path, ref=ref, token=token)
-    contents = get_file(config)
-    return json.loads(contents)
+    form_keys = configured_forms or available_form_keys()
+    if not form_keys:
+        return {}
+
+    payloads: Dict[str, Dict[str, Any]] = {}
+    for form_key in form_keys:
+        config = GHConfig(
+            repo=repo,
+            path=resolve_remote_form_path(path, form_key),
+            ref=ref,
+            token=token,
+        )
+        contents = get_file(config)
+        payloads[form_key] = json.loads(contents)
+
+    return combine_forms(forms_from_payloads(payloads))
 
 ANSWERS_STATE_KEY = "questionnaire_answers"
 QUESTIONNAIRE_QUERY_PARAM = "questionnaire"
@@ -394,8 +429,8 @@ def main() -> None:
         )
     except json.JSONDecodeError:
         github_error = (
-            "The schema file on GitHub is not valid JSON. Using the local copy "
-            "of form_schema.json instead."
+            "The schema file on GitHub is not valid JSON. Using the local form definitions "
+            "in form_schemas/<form_key>/form_schema.json instead."
         )
     except Exception:
         github_error = (
@@ -409,7 +444,7 @@ def main() -> None:
     if not schema:
         schema = load_schema()
     if not schema:
-        st.error("Schema failed to load. Please check form_schema.json.")
+        st.error("Schema failed to load. Please check form_schemas/<name>/form_schema.json.")
         return
 
     questionnaires = normalize_questionnaires(schema)
