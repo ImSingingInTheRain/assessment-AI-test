@@ -32,6 +32,114 @@ DRAFT_BRANCH_STATE_KEY = "editor_draft_branch"
 QUESTION_TYPES = ["single", "multiselect", "bool", "text", "statement"]
 SHOW_IF_BUILDER_STATE_KEY = "editor_show_if_builder"
 
+
+def _is_clause_rule(value: Any) -> bool:
+    """Return ``True`` if ``value`` represents a terminal rule clause."""
+
+    return isinstance(value, dict) and "operator" in value and "all" not in value and "any" not in value
+
+
+def _normalize_group_connectors(groups: List[Dict[str, Any]]) -> None:
+    """Ensure rule group connector metadata is internally consistent."""
+
+    for index, group in enumerate(groups):
+        if index == 0:
+            group["connector"] = None
+        else:
+            connector = group.get("connector")
+            if connector not in {"all", "any"}:
+                group["connector"] = "all"
+
+
+def _group_to_rule(group: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert a builder group into a schema-compatible rule segment."""
+
+    mode = group.get("mode", "all")
+    clauses = [deepcopy(clause) for clause in group.get("clauses", []) if clause]
+    if not clauses:
+        return {}
+    if mode not in {"all", "any"}:
+        mode = "all"
+    return {mode: clauses}
+
+
+def _groups_to_rule(groups: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Collapse an ordered list of rule groups into a nested rule tree."""
+
+    normalized = [group for group in groups if group.get("clauses")]
+    if not normalized:
+        return {}
+
+    _normalize_group_connectors(normalized)
+
+    expression: Dict[str, Any] = _group_to_rule(normalized[0])
+    for group in normalized[1:]:
+        connector = group.get("connector") or "all"
+        rhs = _group_to_rule(group)
+        if not rhs:
+            continue
+        expression = {connector: [expression, rhs]}
+    return expression
+
+
+def _rule_to_groups(rule: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+    """Attempt to decompose a rule tree into ordered builder groups."""
+
+    if not rule:
+        return []
+
+    groups: List[Dict[str, Any]] = []
+
+    def _traverse(node: Any, connector: Optional[str]) -> bool:
+        if _is_clause_rule(node):
+            groups.append({
+                "mode": "all",
+                "clauses": [deepcopy(node)],
+                "connector": connector,
+            })
+            return True
+
+        if not isinstance(node, dict):
+            return False
+
+        key: Optional[str] = None
+        if "all" in node:
+            key = "all"
+        elif "any" in node:
+            key = "any"
+
+        if key is None:
+            return False
+
+        items = node.get(key)
+        if not isinstance(items, list):
+            return False
+
+        if all(_is_clause_rule(item) for item in items):
+            groups.append({
+                "mode": key,
+                "clauses": [deepcopy(item) for item in items],
+                "connector": connector,
+            })
+            return True
+
+        if len(items) == 1:
+            return _traverse(items[0], connector)
+
+        if len(items) == 2:
+            left, right = items
+            if not _traverse(left, connector):
+                return False
+            return _traverse(right, key)
+
+        return False
+
+    if not _traverse(rule, None):
+        return None
+
+    _normalize_group_connectors(groups)
+    return groups
+
 OPERATOR_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     "equals": {
         "label": "Equals",
@@ -294,17 +402,37 @@ def sync_show_if_builder_state(schema: Dict[str, Any]) -> Dict[str, Dict[str, An
         if not key:
             continue
         valid_keys.add(key)
+
         show_if = question.get("show_if") or {}
         existing_state = builder_state.get(key, {})
-        active_bucket = existing_state.get("active", "all")
-        if show_if:
-            bucket_from_schema = next(iter(show_if.keys()))
-            if bucket_from_schema in {"all", "any"}:
-                active_bucket = bucket_from_schema
+
+        parsed_groups = _rule_to_groups(show_if) if show_if else []
+        unsupported = bool(show_if) and parsed_groups is None
+
+        if unsupported:
+            groups = deepcopy(existing_state.get("groups", [])) or [
+                {"mode": "all", "clauses": [], "connector": None}
+            ]
+        else:
+            groups = (
+                deepcopy(parsed_groups)
+                if parsed_groups is not None and parsed_groups != []
+                else deepcopy(existing_state.get("groups", []))
+            )
+
+        if not groups:
+            groups = [{"mode": "all", "clauses": [], "connector": None}]
+
+        _normalize_group_connectors(groups)
+
+        active_group = existing_state.get("active_group", 0)
+        if not 0 <= active_group < len(groups):
+            active_group = 0
+
         builder_state[key] = {
-            "all": deepcopy(show_if.get("all", existing_state.get("all", []))),
-            "any": deepcopy(show_if.get("any", existing_state.get("any", []))),
-            "active": active_bucket if active_bucket in {"all", "any"} else "all",
+            "groups": groups,
+            "active_group": active_group,
+            "unsupported": unsupported,
         }
 
     for key in list(builder_state.keys()):
@@ -557,31 +685,40 @@ def render_show_if_builder(
 
     target_state = builder_state.setdefault(
         question_key,
-        {"all": [], "any": [], "active": "all"},
+        {
+            "groups": [{"mode": "all", "clauses": [], "connector": None}],
+            "active_group": 0,
+            "unsupported": False,
+        },
     )
 
-    bucket_key = f"show_if_bucket_{question_key}"
-    st.session_state.setdefault(bucket_key, target_state.get("active", "all"))
-    selected_bucket = st.radio(
-        "Combine clauses using",
-        options=["all", "any"],
-        index=["all", "any"].index(st.session_state[bucket_key]),
-        key=bucket_key,
-        horizontal=True,
-        help="Choose whether every clause must match or any single clause is sufficient.",
-    )
-    target_state["active"] = selected_bucket
+    if target_state.get("unsupported"):
+        st.warning(
+            "This rule contains advanced combinations that are not supported by the "
+            "builder. Use the JSON editor to modify it."
+        )
+        return
 
-    target_state.setdefault("all", [])
-    target_state.setdefault("any", [])
-    target_state.setdefault(selected_bucket, [])
+    groups = target_state.setdefault(
+        "groups",
+        [{"mode": "all", "clauses": [], "connector": None}],
+    )
+    if not groups:
+        groups.append({"mode": "all", "clauses": [], "connector": None})
+
+    _normalize_group_connectors(groups)
+
+    active_group_index = target_state.get("active_group", 0)
+    if not 0 <= active_group_index < len(groups):
+        active_group_index = 0
+    target_state["active_group"] = active_group_index
 
     def _sync_question_rule() -> None:
         """Update the question schema and JSON editor when rules change."""
 
-        active_clauses = target_state.get(selected_bucket, [])
-        if active_clauses:
-            target_question["show_if"] = {selected_bucket: deepcopy(active_clauses)}
+        rule_expression = _groups_to_rule(groups)
+        if rule_expression:
+            target_question["show_if"] = rule_expression
         else:
             target_question.pop("show_if", None)
 
@@ -597,9 +734,113 @@ def render_show_if_builder(
 
     _sync_question_rule()
 
+    group_selector_key = f"show_if_active_group_{question_key}"
+    if group_selector_key not in st.session_state:
+        st.session_state[group_selector_key] = active_group_index
+    if not 0 <= st.session_state[group_selector_key] < len(groups):
+        st.session_state[group_selector_key] = 0
+
+    selector_col, add_group_col = st.columns([3, 1])
+    with selector_col:
+        selected_group_index = st.selectbox(
+            "Select rule group",
+            options=list(range(len(groups))),
+            key=group_selector_key,
+            format_func=lambda idx: f"Group {idx + 1}",
+        )
+    with add_group_col:
+        if st.button("Add group", key=f"show_if_add_group_{question_key}"):
+            groups.append({"mode": "all", "clauses": [], "connector": "all"})
+            _normalize_group_connectors(groups)
+            new_index = len(groups) - 1
+            target_state["active_group"] = new_index
+            st.session_state[group_selector_key] = new_index
+            _sync_question_rule()
+            st.success("Group added.")
+            st.experimental_rerun()
+
+    selected_group_index = st.session_state[group_selector_key]
+    if not 0 <= selected_group_index < len(groups):
+        selected_group_index = 0
+    target_state["active_group"] = selected_group_index
+
+    active_group = groups[selected_group_index]
+    _normalize_group_connectors(groups)
+
+    if len(groups) > 1:
+        summary_parts: List[str] = []
+        for idx, group in enumerate(groups):
+            connector = group.get("connector")
+            mode_label = str(group.get("mode", "all")).upper()
+            clause_count = len(group.get("clauses", []))
+            description = f"{mode_label} ({clause_count} clause{'s' if clause_count != 1 else ''})"
+            if idx == 0:
+                summary_parts.append(description)
+            else:
+                connector_label = (connector or "all").upper()
+                summary_parts.append(f"{connector_label} {description}")
+        st.caption(" · ".join(summary_parts))
+
+    mode_col, connector_col, remove_col = st.columns([2, 2, 1])
+
+    group_mode_key = f"show_if_group_mode_{question_key}_{selected_group_index}"
+    current_mode = active_group.get("mode", "all")
+    if current_mode not in {"all", "any"}:
+        current_mode = "all"
+    with mode_col:
+        mode_choice = st.radio(
+            "Within this group, match",
+            options=("all", "any"),
+            index=(0 if current_mode == "all" else 1),
+            key=group_mode_key,
+            horizontal=True,
+            format_func=lambda value: "all clauses" if value == "all" else "any clause",
+        )
+        if mode_choice != current_mode:
+            active_group["mode"] = mode_choice
+            _sync_question_rule()
+
+    with connector_col:
+        if selected_group_index > 0:
+            connector_key = f"show_if_group_connector_{question_key}_{selected_group_index}"
+            current_connector = active_group.get("connector") or "all"
+            connector_choice = st.radio(
+                "Combine with previous groups using",
+                options=("all", "any"),
+                index=(0 if current_connector == "all" else 1),
+                key=connector_key,
+                horizontal=True,
+                format_func=lambda value: "AND" if value == "all" else "OR",
+            )
+            if connector_choice != current_connector:
+                active_group["connector"] = connector_choice
+                _normalize_group_connectors(groups)
+                _sync_question_rule()
+        else:
+            active_group["connector"] = None
+
+    with remove_col:
+        if len(groups) > 1:
+            if st.button(
+                "Remove group",
+                key=f"show_if_remove_group_{question_key}_{selected_group_index}",
+            ):
+                groups.pop(selected_group_index)
+                if not groups:
+                    groups.append({"mode": "all", "clauses": [], "connector": None})
+                _normalize_group_connectors(groups)
+                new_index = min(selected_group_index, len(groups) - 1)
+                target_state["active_group"] = new_index
+                st.session_state[group_selector_key] = new_index
+                _sync_question_rule()
+                st.success("Group removed.")
+                st.experimental_rerun()
+
+    active_group.setdefault("clauses", [])
+
     clause_question_options = [key for key in question_keys if key != question_key] or question_keys
     field_options = [""] + clause_question_options
-    field_state_key = f"show_if_clause_field_{question_key}"
+    field_state_key = f"show_if_clause_field_{question_key}_{selected_group_index}"
     if field_state_key not in st.session_state:
         st.session_state[field_state_key] = field_options[1] if len(field_options) > 1 else ""
     if st.session_state[field_state_key] not in field_options:
@@ -618,7 +859,7 @@ def render_show_if_builder(
     referenced_question = lookup.get(clause_field_key) if clause_field_key else None
 
     operator_options = _operator_options(referenced_question)
-    operator_state_key = f"show_if_operator_{question_key}"
+    operator_state_key = f"show_if_operator_{question_key}_{selected_group_index}"
     if operator_state_key not in st.session_state:
         st.session_state[operator_state_key] = operator_options[0]
     if st.session_state[operator_state_key] not in operator_options:
@@ -649,7 +890,7 @@ def render_show_if_builder(
                 value_options = [str(option) for option in reference_options if isinstance(option, str)]
 
         if value_options:
-            value_single_key = f"show_if_value_single_{question_key}"
+            value_single_key = f"show_if_value_single_{question_key}_{selected_group_index}"
             if value_single_key not in st.session_state:
                 st.session_state[value_single_key] = value_options[0]
             if st.session_state[value_single_key] not in value_options:
@@ -663,7 +904,7 @@ def render_show_if_builder(
         else:
             value = st.text_input(
                 "Value",
-                key=f"show_if_value_text_{question_key}",
+                key=f"show_if_value_text_{question_key}_{selected_group_index}",
                 placeholder="Enter a value to compare against",
             )
             value_valid = bool(str(value).strip())
@@ -675,7 +916,7 @@ def render_show_if_builder(
                 value_options = [str(option) for option in reference_options if isinstance(option, str)]
 
         if value_options:
-            value_multi_key = f"show_if_value_multi_{question_key}"
+            value_multi_key = f"show_if_value_multi_{question_key}_{selected_group_index}"
             if value_multi_key not in st.session_state:
                 st.session_state[value_multi_key] = []
             if st.session_state[value_multi_key]:
@@ -691,7 +932,7 @@ def render_show_if_builder(
             )
             value_valid = bool(value)
         else:
-            value_rows_key = f"show_if_value_rows_{question_key}"
+            value_rows_key = f"show_if_value_rows_{question_key}_{selected_group_index}"
             existing_rows = st.session_state.get(value_rows_key)
             if existing_rows is None:
                 default_rows: Sequence[Any] = [{"Value": ""}]
@@ -727,7 +968,7 @@ def render_show_if_builder(
             if not extracted:
                 st.info("Add at least one value for this condition.")
 
-    if st.button("Add clause", key=f"show_if_add_clause_{question_key}"):
+    if st.button("Add clause", key=f"show_if_add_clause_{question_key}_{selected_group_index}"):
         if selected_operator != "always" and not clause_field_key:
             st.error("Select a question to reference in the clause.")
         elif value_mode == "single" and not value_valid:
@@ -746,18 +987,18 @@ def render_show_if_builder(
             elif value_mode == "multi":
                 clause["value"] = value
 
-            target_state[selected_bucket].append(clause)
+            active_group["clauses"].append(clause)
             _sync_question_rule()
 
-            st.session_state.pop(f"show_if_value_text_{question_key}", None)
-            st.session_state.pop(f"show_if_value_single_{question_key}", None)
-            st.session_state.pop(f"show_if_value_multi_{question_key}", None)
-            st.session_state.pop(f"show_if_value_rows_{question_key}", None)
+            st.session_state.pop(f"show_if_value_text_{question_key}_{selected_group_index}", None)
+            st.session_state.pop(f"show_if_value_single_{question_key}_{selected_group_index}", None)
+            st.session_state.pop(f"show_if_value_multi_{question_key}_{selected_group_index}", None)
+            st.session_state.pop(f"show_if_value_rows_{question_key}_{selected_group_index}", None)
             st.success("Clause added.")
 
-    if target_state[selected_bucket]:
+    if active_group["clauses"]:
         st.markdown("**Current clauses**")
-        for idx, clause in enumerate(target_state[selected_bucket]):
+        for idx, clause in enumerate(active_group["clauses"]):
             field_label = _format_question_option(
                 str(clause.get("field", "") or ""),
                 lookup,
@@ -777,16 +1018,19 @@ def render_show_if_builder(
                 if value_label != "—":
                     st.caption(f"Value: {value_label}")
             with remove_col:
-                if st.button("Remove", key=f"remove_clause_{question_key}_{selected_bucket}_{idx}"):
-                    target_state[selected_bucket].pop(idx)
+                if st.button("Remove", key=f"remove_clause_{question_key}_{selected_group_index}_{idx}"):
+                    active_group["clauses"].pop(idx)
                     _sync_question_rule()
                     st.experimental_rerun()
 
     clear_col, _ = st.columns([1, 3])
     with clear_col:
         if st.button("Clear rule", key=f"clear_show_if_{question_key}"):
-            target_state["all"] = []
-            target_state["any"] = []
+            target_state["groups"] = [
+                {"mode": "all", "clauses": [], "connector": None}
+            ]
+            st.session_state[group_selector_key] = 0
+            target_state["active_group"] = 0
             _sync_question_rule()
             st.success("Show rule cleared.")
             st.experimental_rerun()
