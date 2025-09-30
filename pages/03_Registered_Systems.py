@@ -13,6 +13,7 @@ import streamlit as st
 
 from lib import questionnaire_utils
 from lib.ui_theme import apply_app_theme, page_header
+from lib.submission_storage import delete_submission_files
 
 RECORD_NAME_KEY = getattr(questionnaire_utils, "RECORD_NAME_KEY", "record_name")
 
@@ -517,11 +518,27 @@ else:
                 if st.button("Delete submission", type="secondary"):
                     path = selected.get("_path")
                     if isinstance(path, Path):
+                        submission_id = str(selected.get("Submission ID") or "").strip()
                         try:
                             path.unlink()
                         except OSError as exc:
                             st.error(f"Failed to delete submission: {exc}.")
                         else:
+                            removed_extra, failed_extra = [], []
+                            if submission_id:
+                                removed_extra, failed_extra = delete_submission_files(
+                                    submission_id,
+                                    SUBMISSIONS_DIR,
+                                    skip_paths=[path],
+                                )
+
+                            if failed_extra:
+                                failed_names = ", ".join(candidate.name for candidate in failed_extra)
+                                st.warning(
+                                    "Deleted the selected submission but failed to remove "
+                                    f"additional copies: {failed_names}."
+                                )
+
                             st.success("Submission deleted successfully.")
                             st.session_state.pop(MANAGED_SYSTEM_KEY, None)
                             _set_query_param(SYSTEM_ID_PARAM, None)
