@@ -144,9 +144,6 @@
           {
             "any": [
               {
-                "operator": "always"
-              },
-              {
                 "operator": "not_equals",
                 "field": "q_area",
                 "value": "Research"
