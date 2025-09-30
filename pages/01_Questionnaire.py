@@ -26,6 +26,11 @@ from lib.questionnaire_utils import (
     RUNNER_SELECTED_STATE_KEY,
     normalize_questionnaires,
 )
+from lib.related_records import (
+    RELATED_RECORD_SOURCES,
+    load_related_record_options,
+    related_record_source_label,
+)
 from lib.schema_defaults import (
     DEFAULT_DEBUG_LABEL,
     DEFAULT_INTRO_HEADING,
@@ -521,6 +526,45 @@ def render_question(
             label_visibility="collapsed",
         )
         answers[question_key] = text_value
+    elif question_type == "related_record":
+        source_key = question.get("related_record_source")
+        if not isinstance(source_key, str) or source_key not in RELATED_RECORD_SOURCES:
+            answers.pop(question_key, None)
+            if widget_key in st.session_state:
+                st.session_state.pop(widget_key)
+            st.warning(
+                "Related record questions require a valid source. Contact the questionnaire maintainer."
+            )
+            st.markdown("</div>", unsafe_allow_html=True)
+            return
+
+        options = load_related_record_options(source_key)
+        if not options:
+            answers.pop(question_key, None)
+            if widget_key in st.session_state:
+                st.session_state.pop(widget_key)
+            st.info(
+                f"No records available for {related_record_source_label(source_key)} yet."
+            )
+            st.markdown("</div>", unsafe_allow_html=True)
+            return
+
+        option_values = [value for value, _ in options]
+        labels = {value: label for value, label in options}
+        default_option = default_value if isinstance(default_value, str) else None
+        if default_option not in option_values:
+            default_option = option_values[0]
+        index = option_values.index(default_option)
+        selection = st.selectbox(
+            label,
+            options=option_values,
+            index=index,
+            key=widget_key,
+            label_visibility="collapsed",
+            format_func=lambda value: labels.get(value, value),
+        )
+        answers[question_key] = selection
+        st.caption(f"Selected record ID: `{selection}`")
     elif question_type == "statement":
         answers.pop(question_key, None)
         if widget_key in st.session_state:

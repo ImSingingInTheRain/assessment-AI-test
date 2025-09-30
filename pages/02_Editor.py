@@ -25,6 +25,11 @@ from lib.questionnaire_utils import (
     EDITOR_SELECTED_STATE_KEY,
     normalize_questionnaires,
 )
+from lib.related_records import (
+    RELATED_RECORD_SOURCES,
+    load_related_record_options,
+    related_record_source_label,
+)
 from lib.schema_defaults import (
     DEFAULT_DEBUG_LABEL,
     DEFAULT_INTRO_HEADING,
@@ -42,7 +47,7 @@ SCHEMA_SHA_STATE_KEY = "editor_schema_sha"
 DRAFT_BRANCH_STATE_KEY = "editor_draft_branch"
 FORM_SOURCES_STATE_KEY = "editor_form_sources"
 FORM_RAW_STATE_KEY = "editor_form_raw"
-QUESTION_TYPES = ["single", "multiselect", "bool", "text", "statement"]
+QUESTION_TYPES = ["single", "multiselect", "bool", "text", "statement", "related_record"]
 SHOW_IF_BUILDER_STATE_KEY = "editor_show_if_builder"
 
 
@@ -537,6 +542,33 @@ def render_options_editor(
         st.info("Provide at least one option to offer selectable answers.")
 
     return cleaned
+
+
+def render_related_record_settings(
+    base_key: str, question_type: str, current_source: Optional[str]
+) -> Optional[str]:
+    """Render configuration inputs for related record questions."""
+
+    if question_type != "related_record":
+        return None
+
+    source_keys = list(RELATED_RECORD_SOURCES.keys())
+    if not source_keys:
+        st.warning("No related record sources are configured.")
+        return None
+
+    default_index = 0
+    if current_source in source_keys:
+        default_index = source_keys.index(current_source)
+
+    return st.selectbox(
+        "Record source",
+        options=source_keys,
+        index=default_index,
+        key=f"{base_key}_related_record_source",
+        format_func=related_record_source_label,
+        help="Choose which submissions repository this question should reference.",
+    )
 
 
 def render_question_overview(questions: Sequence[Dict[str, Any]]) -> None:
@@ -1667,6 +1699,43 @@ def render_preview_question(
             help=help_text,
         )
         answers[question_key] = text_value
+    elif question_type == "related_record":
+        source_key = question.get("related_record_source")
+        if not isinstance(source_key, str) or source_key not in RELATED_RECORD_SOURCES:
+            answers.pop(question_key, None)
+            if widget_key in st.session_state:
+                st.session_state.pop(widget_key)
+            st.warning(
+                "Related record questions require a valid source. Update the configuration to continue."
+            )
+            return
+
+        options = load_related_record_options(source_key)
+        if not options:
+            answers.pop(question_key, None)
+            if widget_key in st.session_state:
+                st.session_state.pop(widget_key)
+            st.info(
+                f"No records available for {related_record_source_label(source_key)} yet."
+            )
+            return
+
+        option_values = [value for value, _ in options]
+        labels = {value: label for value, label in options}
+        default_option = default_value if isinstance(default_value, str) else None
+        if default_option not in option_values:
+            default_option = option_values[0]
+        index = option_values.index(default_option)
+        selection = st.selectbox(
+            label,
+            options=option_values,
+            index=index,
+            key=widget_key,
+            help=help_text,
+            format_func=lambda value: labels.get(value, value),
+        )
+        answers[question_key] = selection
+        st.caption(f"Selected record ID: `{selection}`")
     elif question_type == "statement":
         answers.pop(question_key, None)
         if widget_key in st.session_state:
@@ -1931,6 +2000,8 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
         )
 
     form_key = f"edit_{prefix}_{original_key}" if prefix else f"edit_{original_key}"
+    existing_related_source = question.get("related_record_source")
+
     with st.form(form_key):
         st.subheader(f"Edit question: {question.get('label', original_key)}")
 
@@ -1959,6 +2030,12 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
                 index=default_type_index,
                 help="Determines how the answer is captured.",
             )
+
+        related_record_source = render_related_record_settings(
+            form_key,
+            question_type,
+            existing_related_source if isinstance(existing_related_source, str) else None,
+        )
 
         with st.expander(
             "Guidance and placeholders",
@@ -2028,7 +2105,16 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
                 existing_key: value
                 for existing_key, value in question.items()
                 if existing_key
-                not in {"key", "label", "type", "help", "placeholder", "options", "show_if"}
+                not in {
+                    "key",
+                    "label",
+                    "type",
+                    "help",
+                    "placeholder",
+                    "options",
+                    "show_if",
+                    "related_record_source",
+                }
             }
 
             updated_question: Dict[str, Any] = {
@@ -2045,6 +2131,11 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
                 updated_question["options"] = options
             if show_if:
                 updated_question["show_if"] = show_if
+            if question_type == "related_record":
+                if not related_record_source:
+                    st.error("Select a record source for related record questions.")
+                    return
+                updated_question["related_record_source"] = related_record_source
 
             for idx, existing in enumerate(schema.get("questions", [])):
                 if existing.get("key") == original_key:
@@ -2154,6 +2245,10 @@ def render_add_question(schema: Dict[str, Any]) -> None:
         )
         question_type = st.selectbox("Answer type", options=QUESTION_TYPES)
 
+        related_record_source = render_related_record_settings(
+            form_key, question_type, None
+        )
+
         with st.expander("Guidance and placeholders"):
             help_text = st.text_area(
                 "Help text",
@@ -2207,6 +2302,11 @@ def render_add_question(schema: Dict[str, Any]) -> None:
                 new_question["options"] = options
             if show_if:
                 new_question["show_if"] = show_if
+            if question_type == "related_record":
+                if not related_record_source:
+                    st.error("Select a record source for related record questions.")
+                    return
+                new_question["related_record_source"] = related_record_source
 
             schema.setdefault("questions", []).append(new_question)
             st.session_state[SCHEMA_STATE_KEY] = schema
