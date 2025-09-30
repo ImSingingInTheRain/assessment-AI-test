@@ -3,10 +3,29 @@
 from __future__ import annotations
 
 import json
+from importlib import import_module
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Tuple
 
-from lib.questionnaire_utils import MULTI_FORM_FLAG
+
+def _load_multi_form_flag() -> str:
+    """Return the multi-form flag constant from ``questionnaire_utils``.
+
+    The Streamlit execution environment can import the modules in ``lib`` in
+    slightly different orders which, in rare cases, results in
+    ``questionnaire_utils`` being partially initialised when ``form_store``
+    tries to import ``MULTI_FORM_FLAG``. Attempting ``from module import
+    name`` during that window raises ``ImportError`` even though the module is
+    available. To make ``form_store`` resilient we import the module directly
+    and fall back to the known constant if the attribute is temporarily
+    unavailable.
+    """
+
+    module = import_module("lib.questionnaire_utils")
+    return getattr(module, "MULTI_FORM_FLAG", "_multi_form")
+
+
+MULTI_FORM_FLAG = _load_multi_form_flag()
 
 FORM_SCHEMA_FILENAME = "form_schema.json"
 SCHEMAS_ROOT = Path("form_schemas")
