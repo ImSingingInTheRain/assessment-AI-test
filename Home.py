@@ -1,13 +1,11 @@
 """Landing page for the questionnaire app."""
 
 import json
-from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
 import streamlit as st
 
-SCHEMA_PATH = Path("form_schema.json")
-
+from lib.form_store import load_combined_schema
 from lib.questionnaire_utils import (
     RUNNER_SELECTED_STATE_KEY,
     iter_questionnaires,
@@ -17,12 +15,10 @@ from lib.questionnaire_utils import (
 
 @st.cache_data(show_spinner=False)
 def load_schema() -> Dict[str, Any]:
-    """Load questionnaire schema from the local JSON file."""
-    if not SCHEMA_PATH.exists():
-        return {}
+    """Load the combined questionnaire schema from local form files."""
 
-    with SCHEMA_PATH.open("r", encoding="utf-8") as schema_file:
-        return json.load(schema_file)
+    combined, _, _ = load_combined_schema()
+    return combined
 
 
 def render_question_summary(questionnaires: Iterable[Tuple[str, Dict[str, Any]]]) -> None:
@@ -90,11 +86,13 @@ def main() -> None:
         st.code(str(exc))
         return
 
-    if not schema:
-        schema_status.warning("Schema file not found. Add form_schema.json to continue.")
+    questionnaires = normalize_questionnaires(schema)
+    if not schema or not questionnaires:
+        schema_status.warning(
+            "Schema files not found. Add form_schemas/<name>/form_schema.json to continue."
+        )
         return
 
-    questionnaires = normalize_questionnaires(schema)
     total_questions = sum(len(entry.get("questions", [])) for entry in questionnaires.values())
     schema_status.success(
         f"Schema loaded with {len(questionnaires)} questionnaire(s) and {total_questions} question(s)."

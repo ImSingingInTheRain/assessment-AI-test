@@ -10,7 +10,7 @@ from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from collections.abc import Mapping
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import streamlit as st
 
@@ -20,6 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from Home import load_schema
 from lib.github_backend import GitHubBackend, create_branch, ensure_pr, put_file
+from lib.form_store import load_combined_schema, local_form_path, resolve_remote_form_path
 from lib.questionnaire_utils import (
     EDITOR_SELECTED_STATE_KEY,
     normalize_questionnaires,
@@ -39,6 +40,8 @@ from lib.schema_defaults import (
 SCHEMA_STATE_KEY = "editor_schema"
 SCHEMA_SHA_STATE_KEY = "editor_schema_sha"
 DRAFT_BRANCH_STATE_KEY = "editor_draft_branch"
+FORM_SOURCES_STATE_KEY = "editor_form_sources"
+FORM_RAW_STATE_KEY = "editor_form_raw"
 QUESTION_TYPES = ["single", "multiselect", "bool", "text", "statement"]
 SHOW_IF_BUILDER_STATE_KEY = "editor_show_if_builder"
 
@@ -314,7 +317,7 @@ def get_github_config() -> Optional[Dict[str, Any]]:
     secrets = _secrets_dict("github")
     token = secrets.get("token")
     repo = secrets.get("repo")
-    path = secrets.get("path", "form_schema.json")
+    path = secrets.get("path", "form_schemas/{form_key}/form_schema.json")
     branch = secrets.get("branch", "main")
     api_url = secrets.get("api_url", "https://api.github.com")
 
@@ -336,54 +339,111 @@ def get_github_config() -> Optional[Dict[str, Any]]:
     return None
 
 
-def get_backend() -> Optional[GitHubBackend]:
-    """Instantiate a GitHub backend using Streamlit secrets if available."""
+def get_backend(form_key: str) -> Optional[GitHubBackend]:
+    """Instantiate a GitHub backend for ``form_key`` if configuration is available."""
 
     config = get_github_config()
-    if config is not None:
-        return GitHubBackend(
-            token=config["token"],
-            repo=config["repo"],
-            path=config["path"],
-            branch=config.get("branch", "main"),
-            api_url=config.get("api_url", "https://api.github.com"),
-        )
-    return None
+    if config is None:
+        return None
+
+    return GitHubBackend(
+        token=config["token"],
+        repo=config["repo"],
+        path=resolve_remote_form_path(config["path"], form_key),
+        branch=config.get("branch", "main"),
+        api_url=config.get("api_url", "https://api.github.com"),
+    )
 
 
 def get_schema() -> Dict[str, Any]:
     """Fetch the current schema for editing, caching in session state."""
 
-    if SCHEMA_STATE_KEY not in st.session_state:
-        schema = load_schema() or {}
+    if SCHEMA_STATE_KEY not in st.session_state or FORM_SOURCES_STATE_KEY not in st.session_state:
+        schema, sources, raw_payloads = load_combined_schema()
         normalize_questionnaires(schema)
         st.session_state[SCHEMA_STATE_KEY] = schema
+        st.session_state[FORM_SOURCES_STATE_KEY] = sources
+        st.session_state[FORM_RAW_STATE_KEY] = raw_payloads
     else:
         schema = st.session_state[SCHEMA_STATE_KEY]
         normalize_questionnaires(schema)
-    if SCHEMA_SHA_STATE_KEY not in st.session_state:
-        backend = get_backend()
-        if backend is not None:
+
+    sha_state = st.session_state.get(SCHEMA_SHA_STATE_KEY)
+    if not isinstance(sha_state, dict):
+        sha_state = {}
+        st.session_state[SCHEMA_SHA_STATE_KEY] = sha_state
+
+    config = get_github_config()
+    if config is not None:
+        questionnaires = schema.get("questionnaires", {})
+        for form_key in questionnaires.keys():
+            if form_key in sha_state:
+                continue
+            backend = get_backend(form_key)
+            if backend is None:
+                sha_state[form_key] = None
+                continue
             try:
-                st.session_state[SCHEMA_SHA_STATE_KEY] = backend.get_file_sha()
+                sha_state[form_key] = backend.get_file_sha()
             except Exception as exc:  # pylint: disable=broad-except
-                st.error(f"Could not load schema metadata from GitHub: {exc}")
-                st.session_state[SCHEMA_SHA_STATE_KEY] = None
+                st.error(f"Could not load schema metadata from GitHub for '{form_key}': {exc}")
+                sha_state[form_key] = None
     return schema
 
 
-def schema_for_storage(schema: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a copy of ``schema`` suitable for persistence."""
+def schema_for_storage(schema: Dict[str, Any]) -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
+    """Return the active form key, payload for persistence, and questionnaire data."""
 
     storage = deepcopy(schema)
     questionnaires = normalize_questionnaires(storage)
+    if not questionnaires:
+        return "", {}, {}
+
     active_id = storage.pop("_active_questionnaire", None)
-    if isinstance(active_id, str) and active_id in questionnaires:
-        questionnaires[active_id]["page"] = storage.get("page", questionnaires[active_id].get("page", {}))
-        questionnaires[active_id]["questions"] = storage.get("questions", questionnaires[active_id].get("questions", []))
+    if not isinstance(active_id, str) or active_id not in questionnaires:
+        active_id = next(iter(questionnaires))
+
+    selected = deepcopy(questionnaires[active_id])
+    if storage.get("page"):
+        selected["page"] = storage.get("page", selected.get("page", {}))
+    if storage.get("questions"):
+        selected["questions"] = storage.get("questions", selected.get("questions", []))
+
+    raw_payloads: Dict[str, Dict[str, Any]] = st.session_state.get(FORM_RAW_STATE_KEY, {})
+    base_payload = deepcopy(raw_payloads.get(active_id, {}))
+
+    if isinstance(base_payload.get("questionnaire"), dict):
+        questionnaire_section = base_payload["questionnaire"]
+    elif base_payload:
+        questionnaire_section = base_payload
+    else:
+        base_payload = {}
+        questionnaire_section = base_payload
+
+    questionnaire_section["key"] = selected.get("key", active_id)
+    questionnaire_section["label"] = selected.get("label", questionnaire_section.get("key", active_id))
+    questionnaire_section["page"] = selected.get("page", {})
+    questionnaire_section["questions"] = selected.get("questions", [])
+
+    meta = selected.get("meta")
+    if isinstance(meta, dict):
+        base_payload["meta"] = meta
+    elif "meta" in base_payload and not isinstance(base_payload.get("meta"), dict):
+        base_payload.pop("meta", None)
+
+    if questionnaire_section is not base_payload:
+        base_payload["questionnaire"] = questionnaire_section
+    else:
+        base_payload["key"] = questionnaire_section.get("key", active_id)
+        base_payload["label"] = questionnaire_section.get("label", active_id)
+
+    questionnaire_copy = deepcopy(questionnaire_section)
+
     storage.pop("page", None)
     storage.pop("questions", None)
-    return storage
+    storage.pop("questionnaires", None)
+
+    return active_id, base_payload, questionnaire_copy
 
 
 def verify_password(password: str) -> bool:
@@ -1685,8 +1745,12 @@ def validate_schema(schema: Dict[str, Any]) -> List[str]:
 def handle_save_draft(schema: Dict[str, Any]) -> None:
     """Save the current schema to a draft branch and ensure a PR exists."""
 
-    persistable = schema_for_storage(schema)
-    errors = validate_schema(persistable)
+    form_key, persistable, questionnaire_payload = schema_for_storage(schema)
+    if not form_key:
+        st.error("No questionnaire selected to save.")
+        return
+
+    errors = validate_schema(questionnaire_payload)
     if errors:
         for error in errors:
             st.error(error)
@@ -1711,7 +1775,7 @@ def handle_save_draft(schema: Dict[str, Any]) -> None:
     backend = GitHubBackend(
         token=config["token"],
         repo=config["repo"],
-        path=config["path"],
+        path=resolve_remote_form_path(config["path"], form_key),
         branch=branch,
         api_url=config.get("api_url", "https://api.github.com"),
     )
@@ -1723,8 +1787,10 @@ def handle_save_draft(schema: Dict[str, Any]) -> None:
         return
 
     try:
+        form_config = dict(config)
+        form_config["path"] = resolve_remote_form_path(config["path"], form_key)
         put_file(
-            config,
+            form_config,
             persistable,
             sha,
             message=f"chore: save questionnaire draft ({branch})",
@@ -1754,8 +1820,12 @@ def handle_save_draft(schema: Dict[str, Any]) -> None:
 def handle_publish(schema: Dict[str, Any]) -> None:
     """Publish the schema to the main branch or save locally if unavailable."""
 
-    persistable = schema_for_storage(schema)
-    errors = validate_schema(persistable)
+    form_key, persistable, questionnaire_payload = schema_for_storage(schema)
+    if not form_key:
+        st.error("No questionnaire selected to publish.")
+        return
+
+    errors = validate_schema(questionnaire_payload)
     if errors:
         for error in errors:
             st.error(error)
@@ -1766,12 +1836,16 @@ def handle_publish(schema: Dict[str, Any]) -> None:
         backend = GitHubBackend(
             token=config["token"],
             repo=config["repo"],
-            path=config["path"],
+            path=resolve_remote_form_path(config["path"], form_key),
             branch=config.get("branch", "main"),
             api_url=config.get("api_url", "https://api.github.com"),
         )
 
-        stored_sha = st.session_state.get(SCHEMA_SHA_STATE_KEY)
+        sha_state_obj = st.session_state.get(SCHEMA_SHA_STATE_KEY, {})
+        if not isinstance(sha_state_obj, dict):
+            sha_state_obj = {}
+        sha_state = sha_state_obj
+        stored_sha = sha_state.get(form_key)
         try:
             latest_sha = backend.get_file_sha()
         except Exception as exc:  # pylint: disable=broad-except
@@ -1780,12 +1854,16 @@ def handle_publish(schema: Dict[str, Any]) -> None:
 
         if stored_sha is not None and stored_sha != latest_sha:
             st.error("Schema changed upstream—refresh and retry.")
-            st.session_state[SCHEMA_SHA_STATE_KEY] = latest_sha
+            sha_state[form_key] = latest_sha
+            st.session_state[SCHEMA_SHA_STATE_KEY] = sha_state
             return
+
+        form_config = dict(config)
+        form_config["path"] = resolve_remote_form_path(config["path"], form_key)
 
         try:
             response = put_file(
-                config,
+                form_config,
                 persistable,
                 latest_sha,
                 message="chore: publish questionnaire schema",
@@ -1798,21 +1876,37 @@ def handle_publish(schema: Dict[str, Any]) -> None:
         published_sha = None
         if isinstance(response, dict):
             published_sha = response.get("content", {}).get("sha")
-        st.session_state[SCHEMA_SHA_STATE_KEY] = published_sha or latest_sha
+        sha_state[form_key] = published_sha or latest_sha
+        st.session_state[SCHEMA_SHA_STATE_KEY] = sha_state
         st.success("Schema published to the main branch.")
     else:
         try:
-            with open("form_schema.json", "w", encoding="utf-8") as schema_file:
+            sources: Dict[str, Path] = st.session_state.get(FORM_SOURCES_STATE_KEY, {})
+            target_path = local_form_path(form_key, sources)
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            with target_path.open("w", encoding="utf-8") as schema_file:
                 json.dump(persistable, schema_file, indent=2)
+                schema_file.write("\n")
+            sources = dict(sources)
+            sources[form_key] = target_path
+            st.session_state[FORM_SOURCES_STATE_KEY] = sources
         except OSError as exc:
             st.error(f"Could not save schema locally: {exc}")
             return
         st.info("GitHub is not configured; schema saved locally instead.")
-        st.session_state[SCHEMA_SHA_STATE_KEY] = None
+        sha_state_obj = st.session_state.setdefault(SCHEMA_SHA_STATE_KEY, {})
+        if not isinstance(sha_state_obj, dict):
+            sha_state_obj = {}
+        sha_state_obj[form_key] = None
+        st.session_state[SCHEMA_SHA_STATE_KEY] = sha_state_obj
 
     st.cache_data.clear()
     load_schema.clear()
     st.session_state[SCHEMA_STATE_KEY] = schema
+    raw_payloads = st.session_state.setdefault(FORM_RAW_STATE_KEY, {})
+    if isinstance(raw_payloads, dict):
+        raw_payloads[form_key] = persistable
+        st.session_state[FORM_RAW_STATE_KEY] = raw_payloads
     st.session_state.pop(DRAFT_BRANCH_STATE_KEY, None)
 
 
@@ -2210,7 +2304,8 @@ def main() -> None:
     render_add_question(schema)
 
     with st.expander("View raw schema"):
-        st.json(schema_for_storage(schema))
+        _, persistable_preview, _ = schema_for_storage(schema)
+        st.json(persistable_preview)
 
     st.divider()
     st.subheader("Save changes")
