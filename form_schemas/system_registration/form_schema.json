@@ -23,12 +23,7 @@
     {
       "key": "system-type",
       "label": "Which system type are you registering?",
-      "type": "single",
-      "options": [
-        "Placeholder option A",
-        "Placeholder option B",
-        "Placeholder option C"
-      ]
+      "type": "text"
     }
   ],
   "meta": {
