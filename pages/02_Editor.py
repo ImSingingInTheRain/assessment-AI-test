@@ -524,42 +524,41 @@ def render_page_content_editor(schema: Dict[str, Any]) -> None:
             st.session_state[SCHEMA_STATE_KEY] = schema
             st.success("Page content updated. Use Publish or Save as Draft to persist changes.")
 
-def render_show_if_builder(schema: Dict[str, Any]) -> None:
-    """Render a guided rule builder UI for question visibility."""
-
-    st.subheader("Show rule builder")
+def render_show_if_builder(
+    question: Dict[str, Any],
+    schema: Dict[str, Any],
+    json_state_key: str,
+) -> None:
+    """Render the guided rule builder UI scoped to a single question."""
 
     questions = schema.get("questions", [])
     if not questions:
         st.info("Add questions to configure show_if rules.")
         return
 
+    question_key = question.get("key")
+    if not isinstance(question_key, str) or not question_key:
+        st.info("Assign a key to this question before configuring visibility rules.")
+        return
+
     builder_state = sync_show_if_builder_state(schema)
 
-    question_keys = [question.get("key") for question in questions if question.get("key")]
-    if not question_keys:
-        st.info("Questions require keys before rules can be created.")
+    question_keys = [q.get("key") for q in questions if q.get("key")]
+    if question_key not in question_keys:
+        st.info("Save the question to use the rule builder.")
         return
 
     lookup = _question_lookup(questions)
-
-    target_key = st.selectbox(
-        "Select the question to control visibility for",
-        options=question_keys,
-        key="show_if_target_question",
-        format_func=lambda key: _format_question_option(key, lookup),
-    )
-
-    target_question = lookup.get(target_key)
+    target_question = lookup.get(question_key)
     if target_question is None:
         return
 
     target_state = builder_state.setdefault(
-        target_key,
+        question_key,
         {"all": [], "any": [], "active": "all"},
     )
 
-    bucket_key = f"show_if_bucket_{target_key}"
+    bucket_key = f"show_if_bucket_{question_key}"
     st.session_state.setdefault(bucket_key, target_state.get("active", "all"))
     selected_bucket = st.radio(
         "Combine clauses using",
@@ -575,16 +574,30 @@ def render_show_if_builder(schema: Dict[str, Any]) -> None:
     target_state.setdefault("any", [])
     target_state.setdefault(selected_bucket, [])
 
-    active_clauses = target_state.get(selected_bucket, [])
-    if active_clauses:
-        target_question["show_if"] = {selected_bucket: deepcopy(active_clauses)}
-    else:
-        target_question.pop("show_if", None)
-    st.session_state[SCHEMA_STATE_KEY] = schema
+    def _sync_question_rule() -> None:
+        """Update the question schema and JSON editor when rules change."""
 
-    clause_question_options = [key for key in question_keys if key != target_key] or question_keys
+        active_clauses = target_state.get(selected_bucket, [])
+        if active_clauses:
+            target_question["show_if"] = {selected_bucket: deepcopy(active_clauses)}
+        else:
+            target_question.pop("show_if", None)
+
+        if target_question.get("show_if"):
+            st.session_state[json_state_key] = json.dumps(
+                target_question["show_if"],
+                indent=2,
+            )
+        else:
+            st.session_state[json_state_key] = ""
+
+        st.session_state[SCHEMA_STATE_KEY] = schema
+
+    _sync_question_rule()
+
+    clause_question_options = [key for key in question_keys if key != question_key] or question_keys
     field_options = [""] + clause_question_options
-    field_state_key = f"show_if_clause_field_{target_key}"
+    field_state_key = f"show_if_clause_field_{question_key}"
     if field_state_key not in st.session_state:
         st.session_state[field_state_key] = field_options[1] if len(field_options) > 1 else ""
     if st.session_state[field_state_key] not in field_options:
@@ -603,7 +616,7 @@ def render_show_if_builder(schema: Dict[str, Any]) -> None:
     referenced_question = lookup.get(clause_field_key) if clause_field_key else None
 
     operator_options = _operator_options(referenced_question)
-    operator_state_key = f"show_if_operator_{target_key}"
+    operator_state_key = f"show_if_operator_{question_key}"
     if operator_state_key not in st.session_state:
         st.session_state[operator_state_key] = operator_options[0]
     if st.session_state[operator_state_key] not in operator_options:
@@ -634,7 +647,7 @@ def render_show_if_builder(schema: Dict[str, Any]) -> None:
                 value_options = [str(option) for option in reference_options if isinstance(option, str)]
 
         if value_options:
-            value_single_key = f"show_if_value_single_{target_key}"
+            value_single_key = f"show_if_value_single_{question_key}"
             if value_single_key not in st.session_state:
                 st.session_state[value_single_key] = value_options[0]
             if st.session_state[value_single_key] not in value_options:
@@ -648,7 +661,7 @@ def render_show_if_builder(schema: Dict[str, Any]) -> None:
         else:
             value = st.text_input(
                 "Value",
-                key=f"show_if_value_text_{target_key}",
+                key=f"show_if_value_text_{question_key}",
                 placeholder="Enter a value to compare against",
             )
             value_valid = bool(str(value).strip())
@@ -660,7 +673,7 @@ def render_show_if_builder(schema: Dict[str, Any]) -> None:
                 value_options = [str(option) for option in reference_options if isinstance(option, str)]
 
         if value_options:
-            value_multi_key = f"show_if_value_multi_{target_key}"
+            value_multi_key = f"show_if_value_multi_{question_key}"
             if value_multi_key not in st.session_state:
                 st.session_state[value_multi_key] = []
             if st.session_state[value_multi_key]:
@@ -676,7 +689,7 @@ def render_show_if_builder(schema: Dict[str, Any]) -> None:
             )
             value_valid = bool(value)
         else:
-            value_rows_key = f"show_if_value_rows_{target_key}"
+            value_rows_key = f"show_if_value_rows_{question_key}"
             existing_rows = st.session_state.get(value_rows_key)
             if existing_rows is None:
                 default_rows: Sequence[Any] = [{"Value": ""}]
@@ -712,7 +725,7 @@ def render_show_if_builder(schema: Dict[str, Any]) -> None:
             if not extracted:
                 st.info("Add at least one value for this condition.")
 
-    if st.button("Add clause", key=f"show_if_add_clause_{target_key}"):
+    if st.button("Add clause", key=f"show_if_add_clause_{question_key}"):
         if selected_operator != "always" and not clause_field_key:
             st.error("Select a question to reference in the clause.")
         elif value_mode == "single" and not value_valid:
@@ -732,18 +745,12 @@ def render_show_if_builder(schema: Dict[str, Any]) -> None:
                 clause["value"] = value
 
             target_state[selected_bucket].append(clause)
-            if target_state[selected_bucket]:
-                target_question["show_if"] = {
-                    selected_bucket: deepcopy(target_state[selected_bucket])
-                }
-            else:
-                target_question.pop("show_if", None)
+            _sync_question_rule()
 
-            st.session_state[SCHEMA_STATE_KEY] = schema
-            st.session_state.pop(f"show_if_value_text_{target_key}", None)
-            st.session_state.pop(f"show_if_value_single_{target_key}", None)
-            st.session_state.pop(f"show_if_value_multi_{target_key}", None)
-            st.session_state.pop(f"show_if_value_rows_{target_key}", None)
+            st.session_state.pop(f"show_if_value_text_{question_key}", None)
+            st.session_state.pop(f"show_if_value_single_{question_key}", None)
+            st.session_state.pop(f"show_if_value_multi_{question_key}", None)
+            st.session_state.pop(f"show_if_value_rows_{question_key}", None)
             st.success("Clause added.")
 
     if target_state[selected_bucket]:
@@ -768,24 +775,17 @@ def render_show_if_builder(schema: Dict[str, Any]) -> None:
                 if value_label != "—":
                     st.caption(f"Value: {value_label}")
             with remove_col:
-                if st.button("Remove", key=f"remove_clause_{target_key}_{selected_bucket}_{idx}"):
+                if st.button("Remove", key=f"remove_clause_{question_key}_{selected_bucket}_{idx}"):
                     target_state[selected_bucket].pop(idx)
-                    if target_state[selected_bucket]:
-                        target_question["show_if"] = {
-                            selected_bucket: deepcopy(target_state[selected_bucket])
-                        }
-                    else:
-                        target_question.pop("show_if", None)
-                    st.session_state[SCHEMA_STATE_KEY] = schema
+                    _sync_question_rule()
                     st.experimental_rerun()
 
     clear_col, _ = st.columns([1, 3])
     with clear_col:
-        if st.button("Clear rule", key=f"clear_show_if_{target_key}"):
+        if st.button("Clear rule", key=f"clear_show_if_{question_key}"):
             target_state["all"] = []
             target_state["any"] = []
-            target_question.pop("show_if", None)
-            st.session_state[SCHEMA_STATE_KEY] = schema
+            _sync_question_rule()
             st.success("Show rule cleared.")
             st.experimental_rerun()
 
@@ -1157,6 +1157,15 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
     """Render the editor form for a single question."""
 
     original_key = question.get("key", "")
+    show_if_json_key = f"show_if_json_{original_key}"
+    initial_show_if = (
+        json.dumps(question.get("show_if", {}), indent=2)
+        if question.get("show_if")
+        else ""
+    )
+    if show_if_json_key not in st.session_state:
+        st.session_state[show_if_json_key] = initial_show_if
+
     with st.form(f"edit_{original_key}"):
         st.subheader(f"Edit question: {question.get('label', original_key)}")
 
@@ -1212,11 +1221,8 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
             )
             show_if_raw = st.text_area(
                 "Show if (JSON)",
-                value=(
-                    json.dumps(question.get("show_if", {}), indent=2)
-                    if question.get("show_if")
-                    else ""
-                ),
+                key=show_if_json_key,
+                value=st.session_state.get(show_if_json_key, initial_show_if),
                 placeholder='{"all": [{"field": "previous_question", "operator": "equals", "value": "Yes"}]}',
                 help="JSON logic describing when the question should appear.",
             )
@@ -1274,6 +1280,7 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
             for idx, existing in enumerate(schema.get("questions", [])):
                 if existing.get("key") == original_key:
                     schema["questions"][idx] = updated_question
+                    question = schema["questions"][idx]
                     break
 
             if new_key != original_key:
@@ -1291,14 +1298,21 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
                     builder_state[new_key] = builder_state.pop(original_key)
                     st.session_state[SHOW_IF_BUILDER_STATE_KEY] = builder_state
 
-                if st.session_state.get("show_if_target_question") == original_key:
-                    st.session_state["show_if_target_question"] = new_key
-
                 for session_key in list(st.session_state.keys()):
                     if session_key.startswith("show_if_") and session_key.endswith(f"_{original_key}"):
                         st.session_state.pop(session_key)
 
                 _rename_show_if_fields(schema, original_key, new_key)
+
+                new_show_if_json_key = f"show_if_json_{new_key}"
+                st.session_state[new_show_if_json_key] = st.session_state.pop(
+                    show_if_json_key,
+                    json.dumps(question.get("show_if", {}), indent=2)
+                    if question.get("show_if")
+                    else "",
+                )
+                show_if_json_key = new_show_if_json_key
+                original_key = new_key
 
             st.session_state[SCHEMA_STATE_KEY] = schema
             st.success("Question updated. Use Publish or Save as Draft to persist changes.")
@@ -1309,6 +1323,22 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
             ]
             st.session_state[SCHEMA_STATE_KEY] = schema
             st.warning("Question removed. Use Publish or Save as Draft to persist changes.")
+
+    builder_toggle_key = f"show_if_builder_visible_{original_key}"
+    if builder_toggle_key not in st.session_state:
+        st.session_state[builder_toggle_key] = bool(question.get("show_if"))
+
+    show_builder = st.checkbox(
+        "Show rule builder",
+        key=builder_toggle_key,
+        help="Toggle to configure visibility rules without editing JSON manually.",
+    )
+
+    with st.expander("Rule builder", expanded=show_builder):
+        if show_builder:
+            render_show_if_builder(question, schema, show_if_json_key)
+        else:
+            st.caption("Enable the toggle above to edit visibility rules with the guided builder.")
 
 
 def render_add_question(schema: Dict[str, Any]) -> None:
@@ -1440,8 +1470,6 @@ def main() -> None:
             render_question_editor(selected_question, schema)
     else:
         st.info("No questions defined yet. Add a question below.")
-
-    render_show_if_builder(schema)
 
     render_add_question(schema)
 
