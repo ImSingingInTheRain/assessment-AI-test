@@ -21,6 +21,18 @@
   },
   "questions": [
     {
+      "key": "name",
+      "label": "assign a name to your assessment",
+      "type": "record_name",
+      "required": true
+    },
+    {
+      "key": "related-sytem",
+      "label": "Select system",
+      "type": "related_record",
+      "related_record_source": "system_registration"
+    },
+    {
       "key": "q_area",
       "label": "Select your area",
       "type": "single",
@@ -154,17 +166,6 @@
           }
         ]
       }
-    },
-    {
-      "key": "related-sytem",
-      "label": "Select system",
-      "type": "related_record",
-      "related_record_source": "system_registration"
-    },
-    {
-      "key": "name",
-      "label": "assign a name to your assessment",
-      "type": "record_name"
     }
   ],
   "meta": {
