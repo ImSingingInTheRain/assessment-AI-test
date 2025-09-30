@@ -15,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 import streamlit as st
 
 from lib import questionnaire_utils
+from lib.ui_theme import apply_app_theme, page_header
 
 RECORD_NAME_KEY = getattr(questionnaire_utils, "RECORD_NAME_KEY", "record_name")
 
@@ -108,12 +109,11 @@ def _strip_private_keys(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any
     return cleaned
 
 
-st.set_page_config(page_title="Assessment submissions", page_icon="📝")
-st.title("Assessment submissions")
-
-st.write(
-    "Browse the assessment responses submitted through the questionnaire. "
-    "Duplicate submissions are grouped by their identifier, showing the most recent entry."
+apply_app_theme(page_title="Assessment submissions", page_icon="📝")
+page_header(
+    "Assessment submissions",
+    "Browse the assessment responses submitted through the questionnaire. Duplicate submissions are grouped by their identifier, showing the most recent entry.",
+    icon="📝",
 )
 
 submissions = _load_submissions(SUBMISSIONS_DIR)
@@ -121,11 +121,25 @@ submissions = _load_submissions(SUBMISSIONS_DIR)
 if not submissions:
     st.info("No assessment submissions found yet.")
 else:
+    unique_questionnaires = {
+        str(record.get("Questionnaire", ""))
+        for record in submissions
+        if str(record.get("Questionnaire", ""))
+    }
+    most_recent = submissions[0].get("Submitted at", "—")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total submissions", len(submissions))
+    col2.metric("Questionnaires", len(unique_questionnaires) or "—")
+    col3.metric("Most recent submission", most_recent or "—")
+
     columns = _table_columns(submissions)
     table_rows = _strip_private_keys(submissions)
-    st.dataframe(
-        table_rows,
-        width="stretch",
-        hide_index=True,
-        column_order=columns,
-    )
+    with st.container():
+        st.markdown("<div class='app-card app-card--table'>", unsafe_allow_html=True)
+        st.dataframe(
+            table_rows,
+            width="stretch",
+            hide_index=True,
+            column_order=columns,
+        )
+        st.markdown("</div>", unsafe_allow_html=True)

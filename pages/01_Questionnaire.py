@@ -22,6 +22,7 @@ from lib.form_store import (
 )
 from lib.github_backend import GitHubBackend
 import lib.questionnaire_utils as questionnaire_utils
+from lib.ui_theme import apply_app_theme, page_header
 
 DEFAULT_QUESTIONNAIRE_KEY = questionnaire_utils.DEFAULT_QUESTIONNAIRE_KEY
 RUNNER_SELECTED_STATE_KEY = questionnaire_utils.RUNNER_SELECTED_STATE_KEY
@@ -749,60 +750,15 @@ def render_question(
 def main() -> None:
     """Render the questionnaire page."""
 
-    st.markdown(
-        """
-        <style>
-        .questionnaire-intro {
-            background: linear-gradient(135deg, rgba(64, 115, 255, 0.12), rgba(129, 212, 250, 0.12));
-            padding: 1.5rem;
-            border-radius: 1rem;
-            border: 1px solid rgba(64, 115, 255, 0.25);
-            margin-bottom: 1.5rem;
-        }
-        .questionnaire-intro h2 {
-            margin: 0 0 0.75rem 0;
-        }
-        .questionnaire-intro p {
-            margin-bottom: 0.75rem;
-        }
-        .question-card {
-            padding: 1.25rem 1.5rem 1.5rem 1.5rem;
-            border-radius: 1rem;
-            background: rgba(255, 255, 255, 0.85);
-            border: 1px solid rgba(49, 51, 63, 0.12);
-            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
-            margin-bottom: 1.25rem;
-        }
-        .question-header {
-            display: flex;
-            flex-direction: column;
-            gap: 0.25rem;
-            margin-bottom: 0.75rem;
-        }
-        .question-header h3 {
-            margin: 0;
-            font-size: 1.1rem;
-        }
-        .question-step {
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: #4361ee;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-        .question-help {
-            color: #5f6368;
-            font-size: 0.92rem;
-            margin-bottom: 0.75rem;
-        }
-        button[kind="primary"], .stButton>button {
-            border-radius: 999px;
-            padding: 0.6rem 1.5rem;
-            font-weight: 600;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
+    apply_app_theme(page_title="Questionnaire runner", page_icon="🗒️")
+    header_placeholder = st.empty()
+
+    def update_header(title: str, subtitle: str) -> None:
+        page_header(title, subtitle, icon="🗒️", container=header_placeholder)
+
+    update_header(
+        "Questionnaire runner",
+        "Load a questionnaire configuration to start collecting responses.",
     )
 
     schema: Dict[str, Any] = {}
@@ -831,11 +787,19 @@ def main() -> None:
     if not schema:
         schema = load_schema()
     if not schema:
+        update_header(
+            "Questionnaire runner",
+            "Schema failed to load. Add a form definition to continue.",
+        )
         st.error("Schema failed to load. Please check form_schemas/<name>/form_schema.json.")
         return
 
     questionnaires = normalize_questionnaires(schema)
     if not questionnaires:
+        update_header(
+            "Questionnaire runner",
+            "No questionnaires configured. Use the editor to create one.",
+        )
         st.error("No questionnaires configured. Use the editor to add one.")
         return
 
@@ -866,7 +830,14 @@ def main() -> None:
     page_title = str(page_settings.get("title") or "")
     if not page_title:
         page_title = selected_questionnaire.get("label", DEFAULT_PAGE_TITLE)
-    st.title(page_title or DEFAULT_PAGE_TITLE)
+    questions = selected_questionnaire.get("questions", [])
+    question_count = len(questions) if isinstance(questions, list) else 0
+    subtitle = (
+        f"{question_count} question{'s' if question_count != 1 else ''} in this flow."
+        if question_count
+        else "No questions configured yet."
+    )
+    update_header(page_title or DEFAULT_PAGE_TITLE, subtitle)
 
     show_introduction = page_settings.get("show_introduction")
     if show_introduction is None:
@@ -896,7 +867,6 @@ def main() -> None:
         intro_parts.append("</div>")
         st.markdown("\n".join(intro_parts), unsafe_allow_html=True)
 
-    questions = selected_questionnaire.get("questions", [])
     if not questions:
         st.info("No questions defined in the schema yet.")
         return
