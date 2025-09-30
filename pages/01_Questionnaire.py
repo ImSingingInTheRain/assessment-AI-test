@@ -25,7 +25,6 @@ import lib.questionnaire_utils as questionnaire_utils
 
 DEFAULT_QUESTIONNAIRE_KEY = questionnaire_utils.DEFAULT_QUESTIONNAIRE_KEY
 RUNNER_SELECTED_STATE_KEY = questionnaire_utils.RUNNER_SELECTED_STATE_KEY
-extract_record_name = questionnaire_utils.extract_record_name
 normalize_questionnaires = questionnaire_utils.normalize_questionnaires
 
 # ``RECORD_NAME_FIELD`` and related constants were added in tandem with this page,
@@ -35,6 +34,39 @@ normalize_questionnaires = questionnaire_utils.normalize_questionnaires
 RECORD_NAME_FIELD = getattr(questionnaire_utils, "RECORD_NAME_FIELD", "_record_name")
 RECORD_NAME_KEY = getattr(questionnaire_utils, "RECORD_NAME_KEY", "record_name")
 RECORD_NAME_TYPE = getattr(questionnaire_utils, "RECORD_NAME_TYPE", "record_name")
+
+
+def _fallback_extract_record_name(
+    questionnaire: Dict[str, Any], answers: Dict[str, Any]
+) -> str:
+    """Best-effort extraction of a record name when helpers are unavailable."""
+
+    questions = questionnaire.get("questions", [])
+    if isinstance(questions, list):
+        for question in questions:
+            if not isinstance(question, dict):
+                continue
+            if question.get("type") != RECORD_NAME_TYPE:
+                continue
+            key = question.get("key")
+            if not isinstance(key, str):
+                continue
+            value = answers.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+    value = answers.get(RECORD_NAME_FIELD)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+
+    return ""
+
+
+extract_record_name = getattr(
+    questionnaire_utils,
+    "extract_record_name",
+    _fallback_extract_record_name,
+)
 from lib.related_records import (
     RELATED_RECORD_SOURCES,
     load_related_record_options,
