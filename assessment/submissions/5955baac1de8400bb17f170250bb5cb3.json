@@ -1,0 +1,19 @@
+{
+  "id": "5955baac1de8400bb17f170250bb5cb3",
+  "questionnaire_key": "assessment",
+  "submitted_at": "2025-09-30T22:02:36.821874+00:00",
+  "answers": {
+    "related-sytem": "64cec68b12af4ff5aa63bcc7cad6622f",
+    "name": "ML assessment",
+    "q_area": "HR",
+    "q_handles_personal_data": "Yes",
+    "q_sensitive_categories": [
+      "Financial"
+    ],
+    "use-AI": "Yes",
+    "high-risk": [
+      "Employee management"
+    ]
+  },
+  "record_name": "ML assessment"
+}
