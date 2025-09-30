@@ -171,6 +171,22 @@ def _rerun() -> None:
         st.rerun()
 
 
+def _render_page_link(page: str, *, label: str, icon: str = "", params: Optional[Dict[str, Any]] = None) -> None:
+    """Render a link to another Streamlit page, preserving query parameters when needed."""
+
+    query = urlencode(params or {}) if params else ""
+    url = f"./{page}{f'?{query}' if query else ''}"
+
+    if params:
+        st.markdown(f"[{label}]({url})", unsafe_allow_html=False)
+        return
+
+    try:
+        st.page_link(page, label=label, icon=icon)
+    except (AttributeError, TypeError):
+        st.markdown(f"[{label}]({url})", unsafe_allow_html=False)
+
+
 def _load_assessment_links() -> Dict[str, List[Dict[str, Any]]]:
     """Return assessment submissions keyed by referenced system ID."""
 
@@ -367,21 +383,12 @@ else:
                         st.write(f"**Submitted at:** {timestamp}")
 
                     params = {ASSESSMENT_QUERY_PARAM: assessment_id} if assessment_id else {}
-                    if params:
-                        try:
-                            st.page_link(
-                                "pages/04_Assessment_Submissions.py",
-                                label="Open in assessment submissions",
-                                icon="📝",
-                                params=params,
-                            )
-                        except AttributeError:
-                            url = "pages/04_Assessment_Submissions.py"
-                            query = urlencode(params)
-                            st.markdown(
-                                f"[Open in assessment submissions](./{url}?{query})",
-                                unsafe_allow_html=False,
-                            )
+                    _render_page_link(
+                        "pages/04_Assessment_Submissions.py",
+                        label="Open in assessment submissions",
+                        icon="📝",
+                        params=params or None,
+                    )
 
                     payload = assessment.get("payload")
                     if isinstance(payload, dict):
