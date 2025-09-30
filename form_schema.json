@@ -26,7 +26,7 @@
     {
       "key": "q_area",
       "label": "Select your area",
-      "type": "multiselect",
+      "type": "single",
       "options": [
         "Research",
         "HR",
@@ -40,7 +40,16 @@
       "options": [
         "Yes",
         "No"
-      ]
+      ],
+      "show_if": {
+        "all": [
+          {
+            "operator": "includes",
+            "field": "q_area",
+            "value": "Research"
+          }
+        ]
+      }
     },
     {
       "key": "q_sensitive_categories",
