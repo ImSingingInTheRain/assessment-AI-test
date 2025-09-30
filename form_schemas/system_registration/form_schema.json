@@ -29,6 +29,11 @@
       "key": "description",
       "label": "Provide a description of the system",
       "type": "text"
+    },
+    {
+      "key": "name-system",
+      "label": "assign a name to your system",
+      "type": "record_name"
     }
   ],
   "meta": {
