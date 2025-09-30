@@ -77,11 +77,13 @@ def normalize_questionnaires(schema: Dict[str, Any]) -> Dict[str, Dict[str, Any]
     if not isinstance(questionnaires, dict) or not questionnaires:
         page_settings = _ensure_mapping(schema.get("page"))
         questions = _ensure_sequence(schema.get("questions"))
+        risks = _ensure_sequence(schema.get("risks"))
         questionnaires = {
             DEFAULT_QUESTIONNAIRE_KEY: {
                 "label": _derive_label(DEFAULT_QUESTIONNAIRE_KEY, {"page": page_settings}),
                 "page": page_settings,
                 "questions": questions,
+                "risks": risks,
             }
         }
 
@@ -90,12 +92,14 @@ def normalize_questionnaires(schema: Dict[str, Any]) -> Dict[str, Dict[str, Any]
         entry = _ensure_mapping(payload).copy()
         entry["page"] = _ensure_mapping(entry.get("page"))
         entry["questions"] = _ensure_sequence(entry.get("questions"))
+        entry["risks"] = _ensure_sequence(entry.get("risks"))
         entry["label"] = _derive_label(key, entry)
         normalised[str(key)] = entry
 
     schema["questionnaires"] = normalised
     schema.pop("page", None)
     schema.pop("questions", None)
+    schema.pop("risks", None)
     return normalised
 
 

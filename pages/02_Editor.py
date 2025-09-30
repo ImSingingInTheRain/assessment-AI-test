@@ -10,7 +10,7 @@ from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from collections.abc import Mapping
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import streamlit as st
 
@@ -55,6 +55,7 @@ DRAFT_BRANCH_STATE_KEY = "editor_draft_branch"
 FORM_SOURCES_STATE_KEY = "editor_form_sources"
 FORM_RAW_STATE_KEY = "editor_form_raw"
 ACTIVE_QUESTION_STATE_KEY = "editor_active_question"
+ACTIVE_RISK_STATE_KEY = "editor_active_risk"
 QUESTION_TYPES = [
     "single",
     "multiselect",
@@ -74,7 +75,10 @@ QUESTION_TYPE_LABELS = {
     "related_record": "Related record",
 }
 SHOW_IF_BUILDER_STATE_KEY = "editor_show_if_builder"
+RISK_BUILDER_STATE_KEY = "editor_risk_builder"
 UNSELECTED_LABEL = "— Select an option —"
+
+RISK_LEVEL_OPTIONS = ["limited", "high", "unacceptable"]
 
 
 def _active_questionnaire_id(schema: Dict[str, Any]) -> str:
@@ -199,6 +203,22 @@ def _groups_to_rule(
         return rendered_groups[0]
 
     return {combine_mode: rendered_groups}
+
+
+def iter_rule_fields(rule: Any) -> List[str]:
+    """Return all question keys referenced by ``rule``."""
+
+    fields: List[str] = []
+    if isinstance(rule, dict):
+        field_value = rule.get("field")
+        if isinstance(field_value, str):
+            fields.append(field_value)
+        for value in rule.values():
+            fields.extend(iter_rule_fields(value))
+    elif isinstance(rule, list):
+        for item in rule:
+            fields.extend(iter_rule_fields(item))
+    return fields
 
 
 def _rule_to_groups(rule: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -440,6 +460,7 @@ def schema_for_storage(schema: Dict[str, Any]) -> Tuple[str, Dict[str, Any], Dic
         selected["page"] = storage.get("page", selected.get("page", {}))
     if storage.get("questions"):
         selected["questions"] = storage.get("questions", selected.get("questions", []))
+    selected["risks"] = storage.get("risks", selected.get("risks", []))
 
     raw_payloads: Dict[str, Dict[str, Any]] = st.session_state.get(FORM_RAW_STATE_KEY, {})
     base_payload = deepcopy(raw_payloads.get(active_id, {}))
@@ -473,6 +494,7 @@ def schema_for_storage(schema: Dict[str, Any]) -> Tuple[str, Dict[str, Any], Dic
 
     storage.pop("page", None)
     storage.pop("questions", None)
+    storage.pop("risks", None)
     storage.pop("questionnaires", None)
 
     return active_id, base_payload, questionnaire_copy
@@ -621,6 +643,29 @@ def _move_question(schema: Dict[str, Any], key: str, offset: int) -> bool:
         questions[current_index],
     )
     schema["questions"] = questions
+    return True
+
+
+def _move_risk(schema: Dict[str, Any], key: str, offset: int) -> bool:
+    """Move a risk identified by ``key`` by ``offset`` places."""
+
+    risks = schema.get("risks")
+    if not isinstance(risks, list):
+        return False
+
+    current_index = next(
+        (index for index, risk in enumerate(risks) if risk.get("key") == key),
+        None,
+    )
+    if current_index is None:
+        return False
+
+    target_index = current_index + offset
+    if not 0 <= target_index < len(risks):
+        return False
+
+    risks[current_index], risks[target_index] = risks[target_index], risks[current_index]
+    schema["risks"] = risks
     return True
 
 
@@ -797,6 +842,905 @@ def render_question_overview(
                 _rerun_app()
 
 
+def render_risk_overview(
+    schema: Dict[str, Any], *, active_key: Optional[str]
+) -> None:
+    """Show a summary of configured risks with inline actions."""
+
+    risks = schema.get("risks", [])
+
+    st.subheader("Risk identification")
+    st.caption(
+        "Use rules to flag risks based on questionnaire answers, assign a level, and record mitigating controls."
+    )
+
+    if not risks:
+        st.info("Risks will appear here once added.")
+        return
+
+    for index, risk in enumerate(risks):
+        key = risk.get("key", "")
+        name = risk.get("name") or key or f"Risk {index + 1}"
+        level = risk.get("level", "")
+        mitigations = risk.get("mitigations")
+        mitigation_count = len(mitigations) if isinstance(mitigations, list) else 0
+        is_active = key and key == active_key
+
+        row = st.container()
+        with row:
+            cols = st.columns([0.6, 3.0, 1.6, 1.6, 1.1, 1.1, 1.1])
+            cols[0].markdown(f"**{index + 1}**")
+            name_text = f"**{name}**" if name else ""
+            if key:
+                name_text = f"{name_text}\n\n`{key}`"
+            if is_active:
+                name_text = f":blue[{name_text}]"
+            cols[1].markdown(name_text or "—")
+            cols[2].write(level.title() if isinstance(level, str) and level else "—")
+            cols[3].write(
+                f"{mitigation_count} mitigation{'s' if mitigation_count != 1 else ''}"
+                if mitigation_count
+                else "No mitigations"
+            )
+
+            move_up = cols[4].button(
+                "▲",
+                key=f"move_risk_up_{key}_{index}",
+                disabled=index == 0,
+                help="Move risk up",
+            )
+            move_down = cols[4].button(
+                "▼",
+                key=f"move_risk_down_{key}_{index}",
+                disabled=index == len(risks) - 1,
+                help="Move risk down",
+            )
+
+            if move_up:
+                if _move_risk(schema, key, -1):
+                    st.session_state[SCHEMA_STATE_KEY] = schema
+                    st.session_state[ACTIVE_RISK_STATE_KEY] = key
+                    _rerun_app()
+
+            if move_down:
+                if _move_risk(schema, key, 1):
+                    st.session_state[SCHEMA_STATE_KEY] = schema
+                    st.session_state[ACTIVE_RISK_STATE_KEY] = key
+                    _rerun_app()
+
+            if cols[5].button(
+                "Edit",
+                key=f"edit_risk_{key}_{index}",
+                help="Open this risk in the editor",
+                type="primary" if is_active else "secondary",
+            ):
+                st.session_state[ACTIVE_RISK_STATE_KEY] = key
+                _rerun_app()
+
+            if cols[6].button(
+                "Delete",
+                key=f"delete_risk_{key}_{index}",
+                help="Remove this risk from the questionnaire",
+            ):
+                schema["risks"] = [
+                    item for item in risks if item.get("key") != key
+                ]
+                _remove_risk_state(schema, key)
+                if st.session_state.get(ACTIVE_RISK_STATE_KEY) == key:
+                    remaining = schema.get("risks", [])
+                    st.session_state[ACTIVE_RISK_STATE_KEY] = (
+                        remaining[0].get("key") if remaining else None
+                    )
+                st.session_state[SCHEMA_STATE_KEY] = schema
+                st.warning("Risk removed. Use Publish or Save as Draft to persist changes.")
+                _rerun_app()
+
+
+
+def render_risk_rule_builder(risk: Dict[str, Any], schema: Dict[str, Any]) -> None:
+    """Render a logic builder for configuring risk trigger rules."""
+
+    prefix = _state_prefix(schema)
+    questions = schema.get("questions", [])
+    if not questions:
+        st.info("Add questions before configuring risk logic.")
+        return
+
+    risk_key = risk.get("key")
+    if not isinstance(risk_key, str) or not risk_key:
+        st.info("Assign a key to this risk before configuring its logic.")
+        return
+
+    builder_state = sync_risk_builder_state(schema)
+    question_keys = [q.get("key") for q in questions if q.get("key")]
+    lookup = _question_lookup(questions)
+
+    target_state = builder_state.setdefault(
+        risk_key,
+        {
+            "groups": [],
+            "combine_mode": "all",
+            "active_group": -1,
+            "unsupported": False,
+        },
+    )
+
+    if target_state.get("unsupported"):
+        st.warning(
+            "This risk uses advanced combinations that are not supported by the builder. "
+            "Use the JSON editor to modify it."
+        )
+        return
+
+    groups = target_state.setdefault("groups", [])
+    _normalize_groups(groups)
+    _ensure_group_labels(groups)
+
+    combine_mode = target_state.get("combine_mode", "all")
+    if combine_mode not in {"all", "any"}:
+        combine_mode = "all"
+    target_state["combine_mode"] = combine_mode
+
+    active_group_index = target_state.get("active_group", 0)
+    if not groups:
+        active_group_index = -1
+    elif not 0 <= active_group_index < len(groups):
+        active_group_index = 0
+    target_state["active_group"] = active_group_index
+
+    def _sync_risk_rule() -> None:
+        rule_expression = _groups_to_rule(groups, target_state.get("combine_mode", "all"))
+        if rule_expression:
+            risk["logic"] = rule_expression
+        else:
+            risk.pop("logic", None)
+        st.session_state[SCHEMA_STATE_KEY] = schema
+
+    _sync_risk_rule()
+
+    group_selector_key = f"risk_active_group_{prefix}_{risk_key}"
+    pending_selector_key = f"risk_pending_active_group_{prefix}_{risk_key}"
+    pending_active_group = st.session_state.pop(pending_selector_key, None)
+    if pending_active_group is not None:
+        st.session_state[group_selector_key] = pending_active_group
+    if groups:
+        if group_selector_key not in st.session_state:
+            st.session_state[group_selector_key] = active_group_index if active_group_index >= 0 else 0
+        if not 0 <= st.session_state[group_selector_key] < len(groups):
+            st.session_state[group_selector_key] = 0
+    else:
+        st.session_state[group_selector_key] = -1
+
+    st.markdown("**Configured rule groups**")
+    if groups:
+        for idx, group in enumerate(groups):
+            mode_label = str(group.get("mode", "all")).upper()
+            clause_count = len(group.get("clauses", []))
+            label = group.get("label", f"Group {idx + 1}")
+            st.caption(
+                f"{label}: {mode_label} · {clause_count} clause"
+                f"{'s' if clause_count != 1 else ''}"
+            )
+    else:
+        st.info("This risk does not have any rule groups yet.")
+
+    selected_group_index = -1
+    if groups:
+        selected_group_index = st.selectbox(
+            "Choose a rule group to edit",
+            options=list(range(len(groups))),
+            key=group_selector_key,
+            format_func=lambda idx: groups[idx].get("label", f"Group {idx + 1}"),
+            help="Pick which group of rules you would like to review or update.",
+        )
+        target_state["active_group"] = selected_group_index
+
+    add_group_clicked = st.button(
+        "Add rule group",
+        key=f"risk_add_group_{prefix}_{risk_key}",
+        help="Create a new set of conditions for triggering this risk.",
+    )
+
+    if add_group_clicked:
+        new_group = {
+            "mode": "all",
+            "clauses": [{"operator": "always"}],
+            "label": _generate_group_label(groups, base_label="New risk rule group"),
+        }
+        groups.append(new_group)
+        _normalize_groups(groups)
+        _ensure_group_labels(groups)
+        new_index = len(groups) - 1
+        target_state["active_group"] = new_index
+        st.session_state[pending_selector_key] = new_index
+        _sync_risk_rule()
+        st.success("Rule group added.")
+        _rerun_app()
+        return
+
+    if len(groups) > 1:
+        combine_key = f"risk_group_combine_{prefix}_{risk_key}"
+        combine_choice = st.radio(
+            "Flag this risk when",
+            options=("all", "any"),
+            index=(0 if target_state.get("combine_mode", "all") == "all" else 1),
+            key=combine_key,
+            horizontal=True,
+            format_func=lambda value: "every group matches" if value == "all" else "any group matches",
+            help="Control how the rule groups work together.",
+        )
+        if combine_choice != target_state.get("combine_mode"):
+            target_state["combine_mode"] = combine_choice
+            _sync_risk_rule()
+
+    if selected_group_index == -1:
+        return
+
+    active_group = groups[selected_group_index]
+    _normalize_groups(groups)
+    _ensure_group_labels(groups)
+
+    label_col, mode_col, remove_col, save_col = st.columns([3, 2, 1, 1])
+
+    group_label_key = f"risk_group_label_{prefix}_{risk_key}_{selected_group_index}"
+    current_label = active_group.get("label", f"Group {selected_group_index + 1}")
+    stored_label = st.session_state.get(group_label_key)
+    if stored_label != current_label:
+        st.session_state[group_label_key] = current_label
+
+    with label_col:
+        entered_label = st.text_input(
+            "Group title",
+            key=group_label_key,
+            help="Give this group a clear name so it is easy to find later.",
+        )
+        sanitized_label = entered_label.strip()
+        if not sanitized_label:
+            sanitized_label = f"Group {selected_group_index + 1}"
+
+        if sanitized_label != current_label:
+            duplicate = any(
+                sanitized_label == group.get("label")
+                for idx, group in enumerate(groups)
+                if idx != selected_group_index
+            )
+            if duplicate:
+                st.warning("Group name must be unique.")
+                st.session_state[group_label_key] = current_label
+            else:
+                active_group["label"] = sanitized_label
+                st.session_state[group_label_key] = sanitized_label
+                _ensure_group_labels(groups)
+
+    group_mode_key = f"risk_group_mode_{prefix}_{risk_key}_{selected_group_index}"
+    current_mode = active_group.get("mode", "all")
+    if current_mode not in {"all", "any"}:
+        current_mode = "all"
+    with mode_col:
+        mode_choice = st.radio(
+            "Inside this group require",
+            options=("all", "any"),
+            index=(0 if current_mode == "all" else 1),
+            key=group_mode_key,
+            horizontal=True,
+            format_func=lambda value: "all conditions" if value == "all" else "any condition",
+            help="Choose whether every clause must match or if one match is enough.",
+        )
+        if mode_choice != current_mode:
+            active_group["mode"] = mode_choice
+            _sync_risk_rule()
+
+    with remove_col:
+        remove_disabled = len(groups) == 0
+        remove_clicked = st.button(
+            "Delete group",
+            key=f"risk_remove_group_{prefix}_{risk_key}_{selected_group_index}",
+            disabled=remove_disabled,
+            help="Remove this group and all of its clauses.",
+        )
+        if remove_clicked and not remove_disabled:
+            groups.pop(selected_group_index)
+            _normalize_groups(groups)
+            _ensure_group_labels(groups)
+            if groups:
+                new_index = min(selected_group_index, len(groups) - 1)
+            else:
+                new_index = -1
+            target_state["active_group"] = new_index
+            st.session_state[pending_selector_key] = new_index
+            _sync_risk_rule()
+            st.success("Rule group removed.")
+            _rerun_app()
+            return
+
+    with save_col:
+        if st.button(
+            "Save changes",
+            key=f"risk_save_group_{prefix}_{risk_key}_{selected_group_index}",
+            help="Record updates you've made to this group.",
+        ):
+            _sync_risk_rule()
+            st.success("Rule group saved.")
+
+    active_group.setdefault("clauses", [])
+
+    clause_question_options = [str(key) for key in question_keys if isinstance(key, str)]
+    field_options = [""] + clause_question_options
+
+    if active_group["clauses"]:
+        st.markdown("**Clauses in this group**")
+        for idx, clause in enumerate(active_group["clauses"]):
+            clause_field_label = _format_question_option(
+                str(clause.get("field", "") or ""),
+                lookup,
+            )
+            operator_details = OPERATOR_DEFINITIONS.get(clause.get("operator", ""), {})
+            operator_label = operator_details.get("label", clause.get("operator", ""))
+            summary_parts: List[str] = []
+            if clause.get("field"):
+                summary_parts.append(clause_field_label)
+            summary_parts.append(operator_label)
+            clause_summary = " · ".join(part for part in summary_parts if part)
+            if not clause_summary:
+                clause_summary = f"Clause {idx + 1}"
+
+            with st.expander(f"Clause {idx + 1}: {clause_summary}"):
+                edit_field_col, edit_operator_col = st.columns([2, 2])
+
+                current_field_value = str(clause.get("field", "") or "")
+                available_field_options = list(field_options)
+                if current_field_value and current_field_value not in available_field_options:
+                    available_field_options.append(current_field_value)
+                edit_field_key = (
+                    f"risk_existing_field_{prefix}_{risk_key}_{selected_group_index}_{idx}"
+                )
+                with edit_field_col:
+                    selected_field_value = st.selectbox(
+                        "Question to reference",
+                        options=available_field_options,
+                        index=available_field_options.index(current_field_value),
+                        key=edit_field_key,
+                        format_func=lambda key: _format_question_option(key, lookup),
+                        help="Choose which question's answer this clause should evaluate.",
+                    )
+
+                referenced_question = (
+                    lookup.get(selected_field_value) if selected_field_value else None
+                )
+                operator_options = _operator_options(referenced_question)
+                current_operator_value = str(
+                    clause.get("operator", operator_options[0] if operator_options else "equals")
+                )
+                if current_operator_value not in operator_options:
+                    operator_options = [current_operator_value] + [
+                        option for option in operator_options if option != current_operator_value
+                    ]
+                edit_operator_key = (
+                    f"risk_existing_operator_{prefix}_{risk_key}_{selected_group_index}_{idx}"
+                )
+                with edit_operator_col:
+                    selected_operator_value = st.selectbox(
+                        "Condition type",
+                        options=operator_options,
+                        index=operator_options.index(current_operator_value),
+                        key=edit_operator_key,
+                        format_func=lambda op: OPERATOR_DEFINITIONS.get(op, {}).get("label", op),
+                        help="Select how the referenced answer should be compared.",
+                    )
+                    selected_operator_definition = OPERATOR_DEFINITIONS.get(
+                        selected_operator_value,
+                        {},
+                    )
+                    operator_description = selected_operator_definition.get("description")
+                    if operator_description:
+                        st.caption(operator_description)
+
+                if selected_operator_value != current_operator_value:
+                    clause["operator"] = selected_operator_value
+                    selected_operator_definition = OPERATOR_DEFINITIONS.get(
+                        selected_operator_value,
+                        {},
+                    )
+                    _sync_risk_rule()
+                else:
+                    selected_operator_definition = OPERATOR_DEFINITIONS.get(
+                        current_operator_value,
+                        {},
+                    )
+
+                if selected_field_value:
+                    if clause.get("field") != selected_field_value:
+                        clause["field"] = selected_field_value
+                        _sync_risk_rule()
+                elif "field" in clause:
+                    clause.pop("field", None)
+                    _sync_risk_rule()
+
+                value_mode = selected_operator_definition.get("value_mode", "none")
+                if value_mode == "single":
+                    value_options: List[str] = []
+                    if referenced_question:
+                        reference_options = referenced_question.get("options")
+                        if isinstance(reference_options, list):
+                            value_options = [
+                                str(option) for option in reference_options if isinstance(option, str)
+                            ]
+
+                    if value_options:
+                        value_single_key = (
+                            f"risk_existing_value_single_{prefix}_{risk_key}_{selected_group_index}_{idx}"
+                        )
+                        if value_single_key not in st.session_state:
+                            clause_value = clause.get("value")
+                            st.session_state[value_single_key] = (
+                                clause_value
+                                if isinstance(clause_value, str) and clause_value in value_options
+                                else value_options[0]
+                            )
+                        if st.session_state[value_single_key] not in value_options:
+                            st.session_state[value_single_key] = value_options[0]
+                        selected_value = st.selectbox(
+                            "Matching value",
+                            options=value_options,
+                            index=value_options.index(st.session_state[value_single_key]),
+                            key=value_single_key,
+                            help="Pick the answer that should satisfy this clause.",
+                        )
+                        if clause.get("value") != selected_value:
+                            clause["value"] = selected_value
+                            _sync_risk_rule()
+                    else:
+                        value_text_key = (
+                            f"risk_existing_value_text_{prefix}_{risk_key}_{selected_group_index}_{idx}"
+                        )
+                        existing_value = clause.get("value") if isinstance(clause.get("value"), str) else ""
+                        value_text = st.text_input(
+                            "Matching value",
+                            value=existing_value,
+                            key=value_text_key,
+                            placeholder="Enter a value to compare against",
+                        )
+                        if clause.get("value") != value_text:
+                            clause["value"] = value_text
+                            _sync_risk_rule()
+                        if not str(value_text).strip():
+                            st.info("Provide a value to keep this clause active.")
+                elif value_mode == "multi":
+                    value_options: List[str] = []
+                    if referenced_question:
+                        reference_options = referenced_question.get("options")
+                        if isinstance(reference_options, list):
+                            value_options = [
+                                str(option) for option in reference_options if isinstance(option, str)
+                            ]
+
+                    if value_options:
+                        value_multi_key = (
+                            f"risk_existing_value_multi_{prefix}_{risk_key}_{selected_group_index}_{idx}"
+                        )
+                        if value_multi_key not in st.session_state:
+                            clause_value = clause.get("value")
+                            if isinstance(clause_value, list):
+                                st.session_state[value_multi_key] = [
+                                    str(val) for val in clause_value if str(val) in value_options
+                                ]
+                            else:
+                                st.session_state[value_multi_key] = []
+                        if st.session_state[value_multi_key]:
+                            st.session_state[value_multi_key] = [
+                                option for option in st.session_state[value_multi_key] if option in value_options
+                            ]
+                        selected_values = st.multiselect(
+                            "Matching values",
+                            options=value_options,
+                            default=st.session_state[value_multi_key],
+                            key=value_multi_key,
+                            help="Select all answers that should satisfy this clause.",
+                        )
+                        if clause.get("value") != selected_values:
+                            clause["value"] = selected_values
+                            _sync_risk_rule()
+                        if not selected_values:
+                            st.info("Select at least one value to keep this clause active.")
+                    else:
+                        value_rows_key = (
+                            f"risk_existing_value_rows_{prefix}_{risk_key}_{selected_group_index}_{idx}"
+                        )
+                        existing_rows = st.session_state.get(value_rows_key)
+                        if existing_rows is None:
+                            clause_values = clause.get("value")
+                            if isinstance(clause_values, Sequence) and not isinstance(clause_values, str):
+                                default_rows = [
+                                    {"Value": str(item)} for item in clause_values if str(item).strip()
+                                ] or [{"Value": ""}]
+                            else:
+                                default_rows = [{"Value": ""}]
+                        else:
+                            default_rows = existing_rows
+                        value_rows = st.data_editor(
+                            default_rows,
+                            num_rows="dynamic",
+                            hide_index=True,
+                            key=value_rows_key,
+                            use_container_width=True,
+                        )
+
+                        if hasattr(value_rows, "to_dict"):
+                            rows_iterable = value_rows.to_dict(orient="records")  # type: ignore[call-arg]
+                        elif isinstance(value_rows, list):
+                            rows_iterable = value_rows
+                        else:
+                            rows_iterable = []
+
+                        extracted: List[str] = []
+                        for row in rows_iterable:
+                            if isinstance(row, dict):
+                                raw_value = str(row.get("Value", "")).strip()
+                            else:
+                                raw_value = str(row).strip()
+                            if raw_value:
+                                extracted.append(raw_value)
+
+                        if clause.get("value") != extracted:
+                            clause["value"] = extracted
+                            _sync_risk_rule()
+                        if not extracted:
+                            st.info("Add at least one value for this clause.")
+                else:
+                    if "value" in clause:
+                        clause.pop("value", None)
+                        _sync_risk_rule()
+
+                remove_key = f"risk_remove_clause_{prefix}_{risk_key}_{selected_group_index}_{idx}"
+                if st.button(
+                    "Remove clause",
+                    key=remove_key,
+                    help="Delete this condition from the group.",
+                ):
+                    active_group["clauses"].pop(idx)
+                    _sync_risk_rule()
+                    _rerun_app()
+                    return
+
+    st.divider()
+    st.markdown("**Add a new clause**")
+
+    field_state_key = f"risk_clause_field_{prefix}_{risk_key}_{selected_group_index}"
+    if field_state_key not in st.session_state:
+        st.session_state[field_state_key] = field_options[1] if len(field_options) > 1 else ""
+    if st.session_state[field_state_key] not in field_options:
+        st.session_state[field_state_key] = field_options[0]
+
+    selector_col, operator_col = st.columns([2, 2])
+    with selector_col:
+        clause_field_key = st.selectbox(
+            "Question to reference",
+            options=field_options,
+            index=field_options.index(st.session_state[field_state_key]),
+            key=field_state_key,
+            format_func=lambda key: _format_question_option(key, lookup),
+            help="Pick which question this new clause should depend on.",
+        )
+
+    referenced_question = lookup.get(clause_field_key) if clause_field_key else None
+
+    operator_options = _operator_options(referenced_question)
+    operator_state_key = f"risk_operator_{prefix}_{risk_key}_{selected_group_index}"
+    if operator_state_key not in st.session_state:
+        st.session_state[operator_state_key] = operator_options[0]
+    if st.session_state[operator_state_key] not in operator_options:
+        st.session_state[operator_state_key] = operator_options[0]
+
+    with operator_col:
+        selected_operator = st.selectbox(
+            "Condition type",
+            options=operator_options,
+            index=operator_options.index(st.session_state[operator_state_key]),
+            key=operator_state_key,
+            format_func=lambda op: OPERATOR_DEFINITIONS.get(op, {}).get("label", op),
+            help="Select how the referenced answer should be compared.",
+        )
+        operator_definition = OPERATOR_DEFINITIONS.get(selected_operator, {})
+        operator_description = operator_definition.get("description")
+        if operator_description:
+            st.caption(operator_description)
+
+    value_mode = operator_definition.get("value_mode", "none")
+    value: Any = None
+    value_valid = True
+
+    if value_mode == "single":
+        value_options: List[str] = []
+        if referenced_question:
+            reference_options = referenced_question.get("options")
+            if isinstance(reference_options, list):
+                value_options = [str(option) for option in reference_options if isinstance(option, str)]
+
+        if value_options:
+            value_single_key = f"risk_value_single_{prefix}_{risk_key}_{selected_group_index}"
+            if value_single_key not in st.session_state:
+                st.session_state[value_single_key] = value_options[0]
+            if st.session_state[value_single_key] not in value_options:
+                st.session_state[value_single_key] = value_options[0]
+            value = st.selectbox(
+                "Comparison value",
+                options=value_options,
+                index=value_options.index(st.session_state[value_single_key]),
+                key=value_single_key,
+                help="Pick the answer that should satisfy this new clause.",
+            )
+        else:
+            value = st.text_input(
+                "Comparison value",
+                key=f"risk_value_text_{prefix}_{risk_key}_{selected_group_index}",
+                placeholder="Enter a value to compare against",
+            )
+            value_valid = bool(str(value).strip())
+            if not value_valid:
+                st.info("Provide a value to compare against.")
+    elif value_mode == "multi":
+        value_options = []
+        if referenced_question:
+            reference_options = referenced_question.get("options")
+            if isinstance(reference_options, list):
+                value_options = [str(option) for option in reference_options if isinstance(option, str)]
+
+        if value_options:
+            value_multi_key = f"risk_value_multi_{prefix}_{risk_key}_{selected_group_index}"
+            if value_multi_key not in st.session_state:
+                st.session_state[value_multi_key] = []
+            if st.session_state[value_multi_key]:
+                st.session_state[value_multi_key] = [
+                    option for option in st.session_state[value_multi_key] if option in value_options
+                ]
+            value = st.multiselect(
+                "Matching values",
+                options=value_options,
+                default=st.session_state[value_multi_key],
+                key=value_multi_key,
+                help="Choose one or more answers that should satisfy this clause.",
+            )
+            value_valid = bool(value)
+            if not value_valid:
+                st.info("Select at least one value to compare against.")
+        else:
+            value_rows_key = f"risk_value_rows_{prefix}_{risk_key}_{selected_group_index}"
+            existing_rows = st.session_state.get(value_rows_key)
+            if existing_rows is None:
+                default_rows: Sequence[Any] = [{"Value": ""}]
+            else:
+                default_rows = existing_rows
+            value_rows = st.data_editor(
+                default_rows,
+                num_rows="dynamic",
+                hide_index=True,
+                key=value_rows_key,
+                use_container_width=True,
+            )
+
+            rows_iterable: Sequence[Any]
+            if hasattr(value_rows, "to_dict"):
+                rows_iterable = value_rows.to_dict(orient="records")  # type: ignore[call-arg]
+            elif isinstance(value_rows, list):
+                rows_iterable = value_rows
+            else:
+                rows_iterable = []
+
+            extracted: List[str] = []
+            for row in rows_iterable:
+                if isinstance(row, dict):
+                    raw_value = str(row.get("Value", "")).strip()
+                else:
+                    raw_value = str(row).strip()
+                if raw_value:
+                    extracted.append(raw_value)
+
+            value = extracted
+            value_valid = bool(extracted)
+            if not extracted:
+                st.info("Add at least one value for this clause.")
+
+    if st.button(
+        "Add condition",
+        key=f"risk_add_clause_{prefix}_{risk_key}_{selected_group_index}",
+        help="Append this new condition to the selected group.",
+    ):
+        if selected_operator != "always" and not clause_field_key:
+            st.error("Select a question to reference for this clause.")
+        elif value_mode == "single" and not value_valid:
+            st.error("Provide a value to compare against.")
+        elif value_mode == "multi" and not value_valid:
+            st.error("Provide at least one value for this condition.")
+        else:
+            clause: Dict[str, Any] = {"operator": selected_operator}
+            if clause_field_key:
+                clause["field"] = clause_field_key
+            if value_mode == "single":
+                clause_value = value
+                if isinstance(clause_value, str):
+                    clause_value = clause_value.strip()
+                clause["value"] = clause_value
+            elif value_mode == "multi":
+                clause["value"] = value
+
+            active_group["clauses"].append(clause)
+            _sync_risk_rule()
+
+            st.session_state.pop(f"risk_value_text_{prefix}_{risk_key}_{selected_group_index}", None)
+            st.session_state.pop(f"risk_value_single_{prefix}_{risk_key}_{selected_group_index}", None)
+            st.session_state.pop(f"risk_value_multi_{prefix}_{risk_key}_{selected_group_index}", None)
+            st.session_state.pop(f"risk_value_rows_{prefix}_{risk_key}_{selected_group_index}", None)
+            st.success("Condition added.")
+
+    clear_col, _ = st.columns([1, 3])
+    with clear_col:
+        if st.button(
+            "Clear all logic",
+            key=f"clear_risk_logic_{prefix}_{risk_key}",
+            help="Remove every rule group and start fresh.",
+        ):
+            target_state["groups"] = []
+            target_state["combine_mode"] = "all"
+            st.session_state[group_selector_key] = -1
+            target_state["active_group"] = -1
+            _sync_risk_rule()
+            st.success("All risk logic cleared.")
+            _rerun_app()
+
+    if risk.get("logic"):
+        st.markdown("**Current logic JSON**")
+        st.json(risk["logic"])
+    else:
+        st.info("No logic configured for this risk yet.")
+
+
+def render_risk_editor(risk: Dict[str, Any], schema: Dict[str, Any]) -> None:
+    """Render controls for editing an individual risk."""
+
+    prefix = _state_prefix(schema)
+    original_key = risk.get("key", "")
+    form_key = f"edit_risk_{prefix}_{original_key}" if prefix else f"edit_risk_{original_key}"
+
+    mitigations = risk.get("mitigations") if isinstance(risk.get("mitigations"), list) else []
+    mitigations_text = "\n".join(str(item) for item in mitigations) if mitigations else ""
+
+    with st.form(form_key):
+        display_name = risk.get("name") or original_key or "Risk"
+        st.subheader(f"Edit risk: {display_name}")
+
+        key_input = st.text_input(
+            "Key",
+            value=original_key,
+            help="Unique identifier used in the schema. Letters, numbers, and underscores only.",
+        )
+        name_input = st.text_input(
+            "Name",
+            value=risk.get("name", ""),
+            help="Human-friendly label describing the risk.",
+        )
+        level_options = RISK_LEVEL_OPTIONS
+        current_level = risk.get("level") if risk.get("level") in level_options else level_options[0]
+        level_input = st.selectbox(
+            "Risk level",
+            options=level_options,
+            index=level_options.index(current_level),
+            format_func=lambda value: value.title(),
+            help="Choose the severity level that should be applied when this risk is triggered.",
+        )
+        mitigations_input = st.text_area(
+            "Mitigating controls",
+            value=mitigations_text,
+            help="Optional. Enter one control per line to capture recommendations.",
+        )
+
+        submitted = st.form_submit_button("Save risk")
+
+    if submitted:
+        new_key = key_input.strip()
+        if not new_key:
+            st.error("Key is required.")
+            return
+
+        duplicate = any(
+            existing.get("key") == new_key and existing is not risk
+            for existing in schema.get("risks", [])
+        )
+        if duplicate:
+            st.error("A risk with this key already exists.")
+            return
+
+        name_value = name_input.strip()
+        if not name_value:
+            name_value = new_key
+
+        mitigations_list = [line.strip() for line in mitigations_input.splitlines() if line.strip()]
+
+        risk["key"] = new_key
+        risk["name"] = name_value
+        risk["level"] = level_input
+        if mitigations_list:
+            risk["mitigations"] = mitigations_list
+        elif "mitigations" in risk:
+            risk.pop("mitigations", None)
+
+        if new_key != original_key:
+            _rename_risk_state(schema, original_key, new_key)
+            pattern = f"_{prefix}_{original_key}" if prefix else f"_{original_key}"
+            for session_key in list(st.session_state.keys()):
+                if session_key.startswith("risk_") and pattern in session_key:
+                    st.session_state.pop(session_key)
+
+        st.session_state[SCHEMA_STATE_KEY] = schema
+        st.session_state[ACTIVE_RISK_STATE_KEY] = new_key
+        st.success("Risk updated. Use Publish or Save as Draft to persist changes.")
+
+    with st.expander("Risk logic builder", expanded=bool(risk.get("logic"))):
+        render_risk_rule_builder(risk, schema)
+
+
+def render_add_risk(schema: Dict[str, Any]) -> None:
+    """Render the form to create a new risk definition."""
+
+    st.subheader("Add new risk")
+    st.caption("Configure the basics, then use the logic builder to define when it applies.")
+
+    prefix = _state_prefix(schema)
+    form_key = f"add_risk_{prefix}" if prefix else "add_risk"
+
+    with st.form(form_key):
+        key_input = st.text_input(
+            "Key",
+            key=f"{form_key}_key",
+            help="Unique identifier used in the schema. Letters, numbers, and underscores only.",
+        )
+        name_input = st.text_input(
+            "Name",
+            key=f"{form_key}_name",
+            help="Human-friendly name for this risk.",
+        )
+        level_input = st.selectbox(
+            "Risk level",
+            options=RISK_LEVEL_OPTIONS,
+            format_func=lambda value: value.title(),
+            help="Choose the severity level for this risk.",
+        )
+        mitigations_input = st.text_area(
+            "Mitigating controls",
+            key=f"{form_key}_mitigations",
+            help="Optional list of recommended controls, one per line.",
+        )
+
+        submitted = st.form_submit_button("Create risk")
+
+    if not submitted:
+        return
+
+    new_key = key_input.strip()
+    if not new_key:
+        st.error("Key is required.")
+        return
+
+    duplicate = any(existing.get("key") == new_key for existing in schema.get("risks", []))
+    if duplicate:
+        st.error("A risk with this key already exists.")
+        return
+
+    name_value = name_input.strip() or new_key
+    mitigations_list = [line.strip() for line in mitigations_input.splitlines() if line.strip()]
+
+    new_risk: Dict[str, Any] = {
+        "key": new_key,
+        "name": name_value,
+        "level": level_input,
+    }
+    if mitigations_list:
+        new_risk["mitigations"] = mitigations_list
+
+    schema.setdefault("risks", []).append(new_risk)
+    st.session_state[SCHEMA_STATE_KEY] = schema
+    st.session_state[ACTIVE_RISK_STATE_KEY] = new_key
+    st.success("Risk added. Use the builder below to define its logic.")
+    _rerun_app()
 def sync_show_if_builder_state(schema: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     """Ensure the rule builder session state mirrors the current schema."""
 
@@ -860,6 +1804,111 @@ def sync_show_if_builder_state(schema: Dict[str, Any]) -> Dict[str, Dict[str, An
     all_states[questionnaire_id] = builder_state
     st.session_state[SHOW_IF_BUILDER_STATE_KEY] = all_states
     return builder_state
+
+
+def sync_risk_builder_state(schema: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Ensure the risk builder session state mirrors the current schema."""
+
+    questionnaire_id = _active_questionnaire_id(schema)
+    all_states: Dict[str, Dict[str, Any]] = st.session_state.setdefault(
+        RISK_BUILDER_STATE_KEY,
+        {},
+    )
+    builder_state = all_states.setdefault(questionnaire_id, {})
+    valid_keys = set()
+    risks = schema.get("risks", []) if isinstance(schema.get("risks"), list) else []
+
+    for risk in risks:
+        key = risk.get("key")
+        if not key:
+            continue
+        valid_keys.add(key)
+
+        logic = risk.get("logic") or {}
+        existing_state = builder_state.get(key, {})
+
+        parsed_state = _rule_to_groups(logic) if logic else {"groups": [], "combine_mode": "all"}
+        unsupported = bool(logic) and parsed_state is None
+
+        if unsupported:
+            groups = deepcopy(existing_state.get("groups", []))
+            combine_mode = existing_state.get("combine_mode", "all")
+        else:
+            groups = (
+                deepcopy(parsed_state["groups"])
+                if parsed_state is not None
+                else deepcopy(existing_state.get("groups", []))
+            )
+            combine_mode = (
+                parsed_state.get("combine_mode", "all")
+                if parsed_state is not None
+                else existing_state.get("combine_mode", "all")
+            )
+
+        if groups is None:
+            groups = []
+
+        _normalize_groups(groups)
+        _ensure_group_labels(groups)
+
+        active_group = existing_state.get("active_group", -1 if not groups else 0)
+        if not groups:
+            active_group = -1
+        elif not 0 <= active_group < len(groups):
+            active_group = 0
+
+        builder_state[key] = {
+            "groups": groups,
+            "combine_mode": combine_mode if combine_mode in {"all", "any"} else "all",
+            "active_group": active_group,
+            "unsupported": unsupported,
+        }
+
+    for key in list(builder_state.keys()):
+        if key not in valid_keys:
+            builder_state.pop(key)
+
+    all_states[questionnaire_id] = builder_state
+    st.session_state[RISK_BUILDER_STATE_KEY] = all_states
+    return builder_state
+
+
+def _rename_risk_state(schema: Dict[str, Any], old_key: str, new_key: str) -> None:
+    """Rename stored risk builder state when a risk key changes."""
+
+    if old_key == new_key:
+        return
+
+    questionnaire_id = _active_questionnaire_id(schema)
+    all_states = st.session_state.get(RISK_BUILDER_STATE_KEY)
+    if not isinstance(all_states, dict):
+        return
+
+    questionnaire_state = all_states.get(questionnaire_id)
+    if not isinstance(questionnaire_state, dict) or old_key not in questionnaire_state:
+        return
+
+    questionnaire_state[new_key] = questionnaire_state.pop(old_key)
+    all_states[questionnaire_id] = questionnaire_state
+    st.session_state[RISK_BUILDER_STATE_KEY] = all_states
+
+
+def _remove_risk_state(schema: Dict[str, Any], key: str) -> None:
+    """Remove builder state associated with a deleted risk."""
+
+    questionnaire_id = _active_questionnaire_id(schema)
+    all_states = st.session_state.get(RISK_BUILDER_STATE_KEY)
+    if not isinstance(all_states, dict):
+        return
+
+    questionnaire_state = all_states.get(questionnaire_id)
+    if not isinstance(questionnaire_state, dict):
+        return
+
+    if key in questionnaire_state:
+        questionnaire_state.pop(key, None)
+        all_states[questionnaire_id] = questionnaire_state
+        st.session_state[RISK_BUILDER_STATE_KEY] = all_states
 
 
 def _question_lookup(questions: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -2003,6 +3052,11 @@ def _rename_show_if_fields(schema: Dict[str, Any], old_key: str, new_key: str) -
         if show_if:
             _update_rule(show_if)
 
+    for risk in schema.get("risks", []):
+        logic = risk.get("logic")
+        if logic:
+            _update_rule(logic)
+
 def validate_schema(schema: Dict[str, Any]) -> List[str]:
     """Run simple validation checks on the questionnaire schema."""
 
@@ -2019,23 +3073,6 @@ def validate_schema(schema: Dict[str, Any]) -> List[str]:
             errors.append(f"Duplicate question key detected: {key}")
         seen_keys.add(key)
 
-    def iter_rule_fields(rule: Any) -> List[str]:
-        fields: List[str] = []
-        if isinstance(rule, dict):
-            field_value = rule.get("field")
-            if isinstance(field_value, str):
-                fields.append(field_value)
-            for value in rule.values():
-                if isinstance(value, dict):
-                    fields.extend(iter_rule_fields(value))
-                elif isinstance(value, list):
-                    for item in value:
-                        fields.extend(iter_rule_fields(item))
-        elif isinstance(rule, list):
-            for item in rule:
-                fields.extend(iter_rule_fields(item))
-        return fields
-
     for question in questions:
         show_if = question.get("show_if")
         if not show_if:
@@ -2044,6 +3081,39 @@ def validate_schema(schema: Dict[str, Any]) -> List[str]:
             if field not in seen_keys:
                 errors.append(
                     f"Question '{question.get('key', '<unknown>')}' references unknown field '{field}' in show_if rules."
+                )
+
+    risks = schema.get("risks", [])
+    seen_risk_keys: Set[str] = set()
+    for risk in risks:
+        risk_key = risk.get("key")
+        if not risk_key:
+            errors.append("All risks must define a key.")
+            continue
+        if risk_key in seen_risk_keys:
+            errors.append(f"Duplicate risk key detected: {risk_key}")
+        seen_risk_keys.add(risk_key)
+
+        level = risk.get("level")
+        if level not in RISK_LEVEL_OPTIONS:
+            errors.append(
+                f"Risk '{risk_key}' has invalid level '{level}'. Choose one of: {', '.join(RISK_LEVEL_OPTIONS)}."
+            )
+
+        mitigations = risk.get("mitigations")
+        if mitigations is not None:
+            if not isinstance(mitigations, list) or not all(isinstance(item, str) for item in mitigations):
+                errors.append(
+                    f"Risk '{risk_key}' must store mitigating controls as a list of text values."
+                )
+
+        logic = risk.get("logic")
+        if not logic:
+            continue
+        for field in iter_rule_fields(logic):
+            if field not in seen_keys:
+                errors.append(
+                    f"Risk '{risk_key}' references unknown field '{field}' in logic rules."
                 )
 
     return errors
@@ -2687,6 +3757,7 @@ def main() -> None:
     selected_questionnaire = questionnaires[selected_key]
     schema["page"] = selected_questionnaire.setdefault("page", {})
     schema["questions"] = selected_questionnaire.setdefault("questions", [])
+    schema["risks"] = selected_questionnaire.setdefault("risks", [])
     questions = schema.get("questions", [])
     question_keys = [question.get("key") for question in questions if question.get("key")]
     active_question_key = st.session_state.get(ACTIVE_QUESTION_STATE_KEY)
@@ -2698,10 +3769,24 @@ def main() -> None:
         st.session_state.pop(ACTIVE_QUESTION_STATE_KEY, None)
         active_question_key = None
 
+    risks = schema.get("risks", [])
+    risk_keys = [risk.get("key") for risk in risks if risk.get("key")]
+    active_risk_key = st.session_state.get(ACTIVE_RISK_STATE_KEY)
+    if risk_keys:
+        if active_risk_key not in risk_keys:
+            active_risk_key = risk_keys[0]
+            st.session_state[ACTIVE_RISK_STATE_KEY] = active_risk_key
+    else:
+        st.session_state.pop(ACTIVE_RISK_STATE_KEY, None)
+        active_risk_key = None
+
     render_page_content_editor(schema)
     st.divider()
 
     render_question_overview(schema, active_key=active_question_key)
+    st.divider()
+
+    render_risk_overview(schema, active_key=active_risk_key)
     st.divider()
 
     with st.expander("Live Preview", expanded=False):
@@ -2739,6 +3824,18 @@ def main() -> None:
         st.info("No questions defined yet. Add a question below.")
 
     render_add_question(schema)
+
+    if risks:
+        selected_risk = next(
+            (risk for risk in risks if risk.get("key") == active_risk_key),
+            None,
+        )
+        if selected_risk:
+            render_risk_editor(selected_risk, schema)
+        else:
+            st.info("Select a risk from the overview to edit its settings.")
+
+    render_add_risk(schema)
 
     with st.expander("View raw schema"):
         _, persistable_preview, _ = schema_for_storage(schema)
