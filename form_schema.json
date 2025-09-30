@@ -40,16 +40,7 @@
       "options": [
         "Yes",
         "No"
-      ],
-      "show_if": {
-        "all": [
-          {
-            "operator": "includes",
-            "field": "q_area",
-            "value": "Research"
-          }
-        ]
-      }
+      ]
     },
     {
       "key": "q_sensitive_categories",
