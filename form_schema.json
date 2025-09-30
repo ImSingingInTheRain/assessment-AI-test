@@ -112,6 +112,11 @@
           }
         ]
       }
+    },
+    {
+      "key": "r_high_risk",
+      "label": "Your solution is high risk",
+      "type": "statement"
     }
   ]
 }
