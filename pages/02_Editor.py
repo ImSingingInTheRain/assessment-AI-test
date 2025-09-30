@@ -741,6 +741,22 @@ def render_show_if_builder(
         st.session_state[group_selector_key] = 0
 
     selector_col, add_group_col = st.columns([3, 1])
+    add_group_clicked = False
+    with add_group_col:
+        add_group_clicked = st.button(
+            "Add group", key=f"show_if_add_group_{question_key}"
+        )
+
+    if add_group_clicked:
+        groups.append({"mode": "all", "clauses": [], "connector": "all"})
+        _normalize_group_connectors(groups)
+        new_index = len(groups) - 1
+        target_state["active_group"] = new_index
+        st.session_state[group_selector_key] = new_index
+        _sync_question_rule()
+        st.success("Group added.")
+        st.experimental_rerun()
+
     with selector_col:
         selected_group_index = st.selectbox(
             "Select rule group",
@@ -748,16 +764,6 @@ def render_show_if_builder(
             key=group_selector_key,
             format_func=lambda idx: f"Group {idx + 1}",
         )
-    with add_group_col:
-        if st.button("Add group", key=f"show_if_add_group_{question_key}"):
-            groups.append({"mode": "all", "clauses": [], "connector": "all"})
-            _normalize_group_connectors(groups)
-            new_index = len(groups) - 1
-            target_state["active_group"] = new_index
-            st.session_state[group_selector_key] = new_index
-            _sync_question_rule()
-            st.success("Group added.")
-            st.experimental_rerun()
 
     selected_group_index = st.session_state[group_selector_key]
     if not 0 <= selected_group_index < len(groups):
