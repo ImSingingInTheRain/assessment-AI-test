@@ -2,6 +2,20 @@
 
 from __future__ import annotations
 
+# NOTE:
+# Keep the constant definitions at the top of the module. Streamlit sometimes
+# triggers overlapping imports from multiple threads which can observe this
+# module before it has finished initialising. Defining the constants before any
+# other imports ensures they are already present on ``sys.modules`` so ``from
+# lib.questionnaire_utils import NAME`` succeeds even during that window.
+DEFAULT_QUESTIONNAIRE_KEY = "assessment"
+MULTI_FORM_FLAG = "_multi_form"
+EDITOR_SELECTED_STATE_KEY = "editor_selected_questionnaire"
+RUNNER_SELECTED_STATE_KEY = "runner_selected_questionnaire"
+RECORD_NAME_FIELD = "_record_name"
+RECORD_NAME_KEY = "record_name"
+RECORD_NAME_TYPE = "record_name"
+
 from typing import Any, Dict, Iterable, List, Tuple
 
 __all__ = [
@@ -18,14 +32,6 @@ __all__ = [
     "iter_questionnaires",
     "extract_record_name",
 ]
-
-DEFAULT_QUESTIONNAIRE_KEY = "assessment"
-MULTI_FORM_FLAG = "_multi_form"
-EDITOR_SELECTED_STATE_KEY = "editor_selected_questionnaire"
-RUNNER_SELECTED_STATE_KEY = "runner_selected_questionnaire"
-RECORD_NAME_FIELD = "_record_name"
-RECORD_NAME_KEY = "record_name"
-RECORD_NAME_TYPE = "record_name"
 
 
 def _ensure_mapping(value: Any) -> Dict[str, Any]:
