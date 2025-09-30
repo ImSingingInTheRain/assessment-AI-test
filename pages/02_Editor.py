@@ -2132,15 +2132,18 @@ def main() -> None:
     if selected_key not in questionnaire_keys:
         selected_key = questionnaire_keys[0]
     if len(questionnaire_keys) > 1:
-        selected_key = st.selectbox(
+        selected_key = st.radio(
             "Select questionnaire",
             options=questionnaire_keys,
             index=questionnaire_keys.index(selected_key),
             format_func=lambda key: questionnaires[key].get("label", key),
             help="Choose which questionnaire to edit.",
+            horizontal=True,
         )
     else:
-        st.caption(f"Editing questionnaire: {questionnaires[selected_key].get('label', selected_key)}")
+        st.caption(
+            f"Editing questionnaire: {questionnaires[selected_key].get('label', selected_key)}"
+        )
 
     st.session_state[EDITOR_SELECTED_STATE_KEY] = selected_key
     schema["_active_questionnaire"] = selected_key
