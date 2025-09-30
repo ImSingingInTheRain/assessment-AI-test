@@ -1,0 +1,17 @@
+{
+  "id": "92ee4a73b6b04e25a4824e115810e719",
+  "questionnaire_key": "assessment",
+  "submitted_at": "2025-09-30T16:56:16.105858+00:00",
+  "answers": {
+    "q_area": "Research",
+    "q_handles_personal_data": "Yes",
+    "q_sensitive_categories": [
+      "Biometric"
+    ],
+    "use-AI": "Yes",
+    "high-risk": [
+      "Biometric categorization"
+    ],
+    "rd-exception": "No"
+  }
+}
