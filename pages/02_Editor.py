@@ -5,12 +5,18 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import sys
 from copy import deepcopy
 from datetime import datetime
+from pathlib import Path
 from collections.abc import Mapping
 from typing import Any, Dict, List, Optional, Sequence
 
 import streamlit as st
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from Home import load_schema
 from lib.github_backend import GitHubBackend, create_branch, ensure_pr, put_file
