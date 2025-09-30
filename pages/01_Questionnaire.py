@@ -21,15 +21,20 @@ from lib.form_store import (
     resolve_remote_form_path,
 )
 from lib.github_backend import GitHubBackend
-from lib.questionnaire_utils import (
-    DEFAULT_QUESTIONNAIRE_KEY,
-    RECORD_NAME_FIELD,
-    RECORD_NAME_KEY,
-    RECORD_NAME_TYPE,
-    RUNNER_SELECTED_STATE_KEY,
-    extract_record_name,
-    normalize_questionnaires,
-)
+import lib.questionnaire_utils as questionnaire_utils
+
+DEFAULT_QUESTIONNAIRE_KEY = questionnaire_utils.DEFAULT_QUESTIONNAIRE_KEY
+RUNNER_SELECTED_STATE_KEY = questionnaire_utils.RUNNER_SELECTED_STATE_KEY
+extract_record_name = questionnaire_utils.extract_record_name
+normalize_questionnaires = questionnaire_utils.normalize_questionnaires
+
+# ``RECORD_NAME_FIELD`` and related constants were added in tandem with this page,
+# but older deployments may still import a version of ``questionnaire_utils``
+# that predates them. ``getattr`` keeps the page working with those builds
+# instead of failing with an ``ImportError`` when the constants are missing.
+RECORD_NAME_FIELD = getattr(questionnaire_utils, "RECORD_NAME_FIELD", "_record_name")
+RECORD_NAME_KEY = getattr(questionnaire_utils, "RECORD_NAME_KEY", "record_name")
+RECORD_NAME_TYPE = getattr(questionnaire_utils, "RECORD_NAME_TYPE", "record_name")
 from lib.related_records import (
     RELATED_RECORD_SOURCES,
     load_related_record_options,
