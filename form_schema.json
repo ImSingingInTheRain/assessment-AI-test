@@ -25,12 +25,12 @@
   "questions": [
     {
       "key": "q_industry",
-      "label": "Select your industry",
+      "label": "Select your area",
       "type": "multiselect",
       "options": [
-        "Technology",
-        "Healthcare",
-        "Finance"
+        "Research",
+        "HR",
+        "IT"
       ]
     },
     {
@@ -60,6 +60,26 @@
           }
         ]
       }
+    },
+    {
+      "key": "use-AI",
+      "label": "Is your solution using AI?",
+      "type": "single",
+      "options": [
+        "Yes",
+        "No"
+      ]
+    },
+    {
+      "key": "high-risk",
+      "label": "Is AI used in any of the following ways?",
+      "type": "multiselect",
+      "options": [
+        "Biometric categorization",
+        "Biometric identification",
+        "Recruitment",
+        "Employee management"
+      ]
     }
   ]
 }
