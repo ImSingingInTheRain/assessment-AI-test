@@ -45,15 +45,23 @@ def test_generate_group_label_skips_existing_names() -> None:
     ]
 
     label = EDITOR._generate_group_label(groups)  # type: ignore[attr-defined]
-    assert label.startswith("Group 3")
+    assert label == "New rule group"
     assert label not in {group["label"] for group in groups}
 
 
 @pytest.mark.parametrize(
     "existing,expected",
     [
-        ([{"label": "Group 1"}], "Group 2"),
-        ([{"label": "Group 1"}, {"label": "Group 2"}, {"label": "Group 3"}], "Group 4"),
+        ([{"label": "Group 1"}], "New rule group"),
+        ([{"label": "New rule group"}], "New rule group (2)"),
+        (
+            [
+                {"label": "New rule group"},
+                {"label": "New rule group (2)"},
+                {"label": "New rule group (3)"},
+            ],
+            "New rule group (4)",
+        ),
     ],
 )
 def test_generate_group_label_defaults(existing, expected) -> None:
