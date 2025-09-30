@@ -112,6 +112,33 @@
           }
         ]
       }
+    },
+    {
+      "key": "r_high_risk",
+      "label": "Your solution is high risk",
+      "type": "statement",
+      "show_if": {
+        "any": [
+          {
+            "operator": "contains_any",
+            "field": "high-risk",
+            "value": [
+              "Biometric categorization",
+              "Biometric identification",
+              "Recruitment",
+              "Employee management"
+            ]
+          },
+          {
+            "operator": "contains_any",
+            "field": "q_sensitive_categories",
+            "value": [
+              "Biometric",
+              "Health"
+            ]
+          }
+        ]
+      }
     }
   ]
 }
