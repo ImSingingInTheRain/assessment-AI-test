@@ -7,6 +7,7 @@ import hmac
 import json
 from copy import deepcopy
 from datetime import datetime
+from collections.abc import Mapping
 from typing import Any, Dict, List, Optional, Sequence
 
 import streamlit as st
@@ -38,7 +39,7 @@ def _secrets_dict(name: str) -> Dict[str, Any]:
     """Return a mapping stored under ``name`` in Streamlit secrets."""
 
     value = st.secrets.get(name, {})  # type: ignore[arg-type]
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return dict(value)
     return {}
 
