@@ -170,7 +170,9 @@ def should_show_question(question: Dict[str, Any], answers: Dict[str, Any]) -> b
     return eval_rule(show_if, answers)
 
 
-def render_question(question: Dict[str, Any], answers: Dict[str, Any]) -> None:
+def render_question(
+    question: Dict[str, Any], answers: Dict[str, Any], *, index: int, total: int
+) -> None:
     """Render an individual question widget."""
 
     question_key = question["key"]
@@ -187,10 +189,28 @@ def render_question(question: Dict[str, Any], answers: Dict[str, Any]) -> None:
     help_text = question.get("help")
     default_value = answers.get(question_key, question.get("default"))
 
+    question_intro = f"Question {index + 1} of {total}"
+
+    st.markdown(
+        "<div class='question-card'>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"""
+        <div class="question-header">
+            <span class="question-step">{question_intro}</span>
+            <h3>{label}</h3>
+        </div>
+        {f'<p class="question-help">{help_text}</p>' if help_text else ''}
+        """,
+        unsafe_allow_html=True,
+    )
+
     if question_type == "single":
         options: List[str] = question.get("options", [])
         if not options:
             st.warning(f"Question '{question_key}' has no options configured.")
+            st.markdown("</div>", unsafe_allow_html=True)
             return
         if default_value not in options:
             default_value = options[0]
@@ -200,7 +220,7 @@ def render_question(question: Dict[str, Any], answers: Dict[str, Any]) -> None:
             options,
             index=index,
             key=widget_key,
-            help=help_text,
+            label_visibility="collapsed",
         )
         answers[question_key] = selection
     elif question_type == "multiselect":
@@ -212,7 +232,7 @@ def render_question(question: Dict[str, Any], answers: Dict[str, Any]) -> None:
             options=options,
             default=default_value,
             key=widget_key,
-            help=help_text,
+            label_visibility="collapsed",
         )
         answers[question_key] = selections
     elif question_type == "bool":
@@ -221,7 +241,7 @@ def render_question(question: Dict[str, Any], answers: Dict[str, Any]) -> None:
             label,
             value=default_bool,
             key=widget_key,
-            help=help_text,
+            label_visibility="hidden",
         )
         answers[question_key] = selection
     elif question_type == "text":
@@ -231,17 +251,86 @@ def render_question(question: Dict[str, Any], answers: Dict[str, Any]) -> None:
             value=default_text,
             key=widget_key,
             placeholder=question.get("placeholder"),
-            help=help_text,
+            label_visibility="collapsed",
         )
         answers[question_key] = text_value
     else:
         st.warning(f"Unsupported question type: {question_type}")
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def main() -> None:
     """Render the questionnaire page."""
 
     st.title("Questionnaire")
+
+    st.markdown(
+        """
+        <style>
+        .questionnaire-intro {
+            background: linear-gradient(135deg, rgba(64, 115, 255, 0.12), rgba(129, 212, 250, 0.12));
+            padding: 1.5rem;
+            border-radius: 1rem;
+            border: 1px solid rgba(64, 115, 255, 0.25);
+            margin-bottom: 1.5rem;
+        }
+        .questionnaire-intro h2 {
+            margin: 0 0 0.75rem 0;
+        }
+        .questionnaire-intro p {
+            margin-bottom: 0.75rem;
+        }
+        .question-card {
+            padding: 1.25rem 1.5rem 1.5rem 1.5rem;
+            border-radius: 1rem;
+            background: rgba(255, 255, 255, 0.85);
+            border: 1px solid rgba(49, 51, 63, 0.12);
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+            margin-bottom: 1.25rem;
+        }
+        .question-header {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+            margin-bottom: 0.75rem;
+        }
+        .question-header h3 {
+            margin: 0;
+            font-size: 1.1rem;
+        }
+        .question-step {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #4361ee;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .question-help {
+            color: #5f6368;
+            font-size: 0.92rem;
+            margin-bottom: 0.75rem;
+        }
+        button[kind="primary"], .stButton>button {
+            border-radius: 999px;
+            padding: 0.6rem 1.5rem;
+            font-weight: 600;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        """
+        <div class="questionnaire-intro">
+            <h2>👋 Welcome!</h2>
+            <p>Please answer the questions below so we can tailor the experience to you.</p>
+            <p>Questions may appear or disappear automatically depending on your responses.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     schema: Dict[str, Any] = {}
     github_error: Optional[str] = None
@@ -279,18 +368,13 @@ def main() -> None:
 
     answers: Dict[str, Any] = st.session_state.setdefault(ANSWERS_STATE_KEY, {})
 
-    st.write(
-        "Answer the following questions. Show/hide rules apply immediately "
-        "based on your responses."
-    )
-
-    for question in questions:
-        render_question(question, answers)
+    for idx, question in enumerate(questions):
+        render_question(question, answers, index=idx, total=len(questions))
 
     st.session_state[ANSWERS_STATE_KEY] = answers
 
-    st.subheader("Debug: current answers")
-    st.json(st.session_state[ANSWERS_STATE_KEY])
+    with st.expander("Debug: current answers", expanded=False):
+        st.json(st.session_state[ANSWERS_STATE_KEY])
 
     if st.button("Submit questionnaire"):
         st.success("Responses captured. Persistence will be wired via GitHub.")
