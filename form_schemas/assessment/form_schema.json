@@ -154,6 +154,12 @@
           }
         ]
       }
+    },
+    {
+      "key": "related-sytem",
+      "label": "Select system",
+      "type": "related_record",
+      "related_record_source": "system_registration"
     }
   ],
   "meta": {
