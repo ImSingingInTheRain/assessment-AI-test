@@ -53,6 +53,7 @@ SCHEMA_SHA_STATE_KEY = "editor_schema_sha"
 DRAFT_BRANCH_STATE_KEY = "editor_draft_branch"
 FORM_SOURCES_STATE_KEY = "editor_form_sources"
 FORM_RAW_STATE_KEY = "editor_form_raw"
+ACTIVE_QUESTION_STATE_KEY = "editor_active_question"
 QUESTION_TYPES = [
     "single",
     "multiselect",
@@ -72,6 +73,7 @@ QUESTION_TYPE_LABELS = {
     "related_record": "Related record",
 }
 SHOW_IF_BUILDER_STATE_KEY = "editor_show_if_builder"
+UNSELECTED_LABEL = "— Select an option —"
 
 
 def _active_questionnaire_id(schema: Dict[str, Any]) -> str:
@@ -595,27 +597,203 @@ def render_related_record_settings(
     )
 
 
-def render_question_overview(questions: Sequence[Dict[str, Any]]) -> None:
-    """Show a compact table summarising all configured questions."""
+def _move_question(schema: Dict[str, Any], key: str, offset: int) -> bool:
+    """Move a question identified by ``key`` by ``offset`` places."""
+
+    questions = schema.get("questions")
+    if not isinstance(questions, list):
+        return False
+
+    current_index = next(
+        (index for index, question in enumerate(questions) if question.get("key") == key),
+        None,
+    )
+    if current_index is None:
+        return False
+
+    target_index = current_index + offset
+    if not 0 <= target_index < len(questions):
+        return False
+
+    questions[current_index], questions[target_index] = (
+        questions[target_index],
+        questions[current_index],
+    )
+    schema["questions"] = questions
+    return True
+
+
+def render_default_answer_input(
+    base_key: str,
+    question_type: str,
+    options: Sequence[str] | None,
+    current_default: Any,
+) -> Any:
+    """Render controls that capture the default answer for a question."""
+
+    help_text = "Pre-fill the answer when respondents first open the questionnaire."
+
+    if question_type == "single":
+        valid_options = [option for option in options or [] if isinstance(option, str)]
+        selection_options = [UNSELECTED_LABEL, *valid_options]
+        if isinstance(current_default, str) and current_default in valid_options:
+            default_index = selection_options.index(current_default)
+        else:
+            default_index = 0
+        selection = st.selectbox(
+            "Default answer",
+            options=selection_options,
+            index=default_index,
+            key=f"{base_key}_default_single",
+            help=help_text,
+        )
+        return None if selection == UNSELECTED_LABEL else selection
+
+    if question_type == "multiselect":
+        valid_options = [option for option in options or [] if isinstance(option, str)]
+        if isinstance(current_default, list):
+            default_values = [value for value in current_default if value in valid_options]
+        else:
+            default_values = []
+        selections = st.multiselect(
+            "Default answers",
+            options=valid_options,
+            default=default_values,
+            key=f"{base_key}_default_multiselect",
+            help=help_text,
+        )
+        return selections or None
+
+    if question_type == "bool":
+        choices = {
+            "No default": None,
+            "Checked": True,
+            "Unchecked": False,
+        }
+        inverse = {value: label for label, value in choices.items()}
+        default_label = inverse.get(current_default, "No default")
+        selection = st.selectbox(
+            "Default answer",
+            options=list(choices.keys()),
+            index=list(choices.keys()).index(default_label),
+            key=f"{base_key}_default_bool",
+            help=help_text,
+        )
+        return choices[selection]
+
+    if question_type in {"text", RECORD_NAME_TYPE}:
+        default_text = "" if current_default is None else str(current_default)
+        return st.text_input(
+            "Default answer",
+            value=default_text,
+            key=f"{base_key}_default_text",
+            help=help_text,
+        )
+
+    if question_type == "related_record":
+        return st.text_input(
+            "Default record identifier",
+            value=str(current_default or ""),
+            key=f"{base_key}_default_related",
+            help="Provide the record key to select by default, if known.",
+        )
+
+    st.caption("Defaults are not applicable to this question type.")
+    return None
+
+
+def _prepare_default_for_storage(question_type: str, default_value: Any) -> Any:
+    """Normalise ``default_value`` for persistence based on ``question_type``."""
+
+    if question_type == "single":
+        return default_value if isinstance(default_value, str) and default_value else None
+
+    if question_type == "multiselect":
+        if isinstance(default_value, list):
+            cleaned = [value for value in default_value if isinstance(value, str) and value]
+            return cleaned or None
+        return None
+
+    if question_type == "bool":
+        if isinstance(default_value, bool):
+            return default_value
+        return None
+
+    if question_type in {"text", RECORD_NAME_TYPE, "related_record"}:
+        if isinstance(default_value, str):
+            return default_value.strip() or None
+        return None
+
+    return None
+
+
+def render_question_overview(
+    schema: Dict[str, Any], *, active_key: Optional[str]
+) -> None:
+    """Show a compact overview of questions with inline actions."""
+
+    questions = schema.get("questions", [])
 
     st.subheader("Question overview")
+    st.caption("Reorder questions and jump into editing directly from the list below.")
+
     if not questions:
         st.info("Questions will appear here once added.")
         return
 
-    overview_rows = []
-    for index, question in enumerate(questions, start=1):
-        overview_rows.append(
-            {
-                "#": index,
-                "Label": question.get("label", ""),
-                "Key": question.get("key", ""),
-                "Type": question.get("type", ""),
-                "Conditions": "Yes" if question.get("show_if") else "No",
-            }
-        )
+    for index, question in enumerate(questions):
+        key = question.get("key", "")
+        label = question.get("label") or key or f"Question {index + 1}"
+        type_label = QUESTION_TYPE_LABELS.get(question.get("type"), question.get("type", ""))
+        required = bool(question.get("required"))
+        is_active = key and key == active_key
 
-    st.dataframe(overview_rows, use_container_width=True, hide_index=True)
+        row = st.container()
+        with row:
+            cols = st.columns([0.6, 3.5, 1.4, 1.4, 1.3, 1.3])
+            cols[0].markdown(f"**{index + 1}**")
+            label_text = f"**{label}**" if label else ""
+            if key:
+                label_text = f"{label_text}\n\n`{key}`"
+            if is_active:
+                label_text = f":blue[{label_text}]"
+            cols[1].markdown(label_text or "—")
+            cols[2].write(type_label or "—")
+            cols[3].write("Required" if required else "Optional")
+
+            move_up = cols[4].button(
+                "▲",
+                key=f"move_up_{key}_{index}",
+                disabled=index == 0,
+                help="Move question up",
+            )
+            move_down = cols[4].button(
+                "▼",
+                key=f"move_down_{key}_{index}",
+                disabled=index == len(questions) - 1,
+                help="Move question down",
+            )
+
+            if move_up:
+                if _move_question(schema, key, -1):
+                    st.session_state[SCHEMA_STATE_KEY] = schema
+                    st.session_state[ACTIVE_QUESTION_STATE_KEY] = key
+                    _rerun_app()
+
+            if move_down:
+                if _move_question(schema, key, 1):
+                    st.session_state[SCHEMA_STATE_KEY] = schema
+                    st.session_state[ACTIVE_QUESTION_STATE_KEY] = key
+                    _rerun_app()
+
+            if cols[5].button(
+                "Edit",
+                key=f"edit_question_{key}_{index}",
+                help="Open this question in the editor",
+                type="primary" if is_active else "secondary",
+            ):
+                st.session_state[ACTIVE_QUESTION_STATE_KEY] = key
+                _rerun_app()
 
 
 def sync_show_if_builder_state(schema: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
@@ -1675,31 +1853,48 @@ def render_preview_question(
     label = question.get("label", question_key)
     help_text = question.get("help")
     default_value = answers.get(question_key, question.get("default"))
+    required = bool(question.get("required")) and question_type != "statement"
+    display_label = f"{label}{' *' if required else ''}"
 
     if question_type == "single":
-        options: List[str] = question.get("options", [])
+        options: List[str] = [option for option in question.get("options", []) if isinstance(option, str)]
         if not options:
             st.warning(f"Question '{question_key}' has no options configured.")
             return
-        if default_value not in options:
-            default_value = options[0]
-        index = options.index(default_value) if default_value in options else 0
+        choices = [UNSELECTED_LABEL, *options]
+        if widget_key in st.session_state and st.session_state[widget_key] not in choices:
+            st.session_state.pop(widget_key)
+        default_choice = (
+            answers.get(question_key)
+            if answers.get(question_key) in options
+            else default_value
+        )
+        if not isinstance(default_choice, str) or default_choice not in options:
+            default_choice = UNSELECTED_LABEL
+        index = choices.index(default_choice)
         selection = st.radio(
-            label,
-            options,
+            display_label,
+            choices,
             index=index,
             key=widget_key,
             help=help_text,
         )
-        answers[question_key] = selection
+        if selection == UNSELECTED_LABEL:
+            answers.pop(question_key, None)
+        else:
+            answers[question_key] = selection
     elif question_type == "multiselect":
-        options = question.get("options", [])
-        if not isinstance(default_value, list):
-            default_value = question.get("default", [])
+        options = [option for option in question.get("options", []) if isinstance(option, str)]
+        if isinstance(default_value, list):
+            default_selection = [value for value in default_value if value in options]
+        elif isinstance(question.get("default"), list):
+            default_selection = [value for value in question.get("default", []) if value in options]
+        else:
+            default_selection = []
         selections = st.multiselect(
-            label,
+            display_label,
             options=options,
-            default=default_value,
+            default=default_selection,
             key=widget_key,
             help=help_text,
         )
@@ -1707,7 +1902,7 @@ def render_preview_question(
     elif question_type == "bool":
         default_bool = bool(default_value) if default_value is not None else False
         selection = st.checkbox(
-            label,
+            display_label,
             value=default_bool,
             key=widget_key,
             help=help_text,
@@ -1716,7 +1911,7 @@ def render_preview_question(
     elif question_type in {"text", RECORD_NAME_TYPE}:
         default_text = "" if default_value is None else str(default_value)
         text_value = st.text_input(
-            label,
+            display_label,
             value=default_text,
             key=widget_key,
             placeholder=question.get("placeholder"),
@@ -1754,18 +1949,30 @@ def render_preview_question(
         labels = {value: label for value, label in options}
         default_option = default_value if isinstance(default_value, str) else None
         if default_option not in option_values:
-            default_option = option_values[0]
-        index = option_values.index(default_option)
+            default_option = None
+        if widget_key in st.session_state and st.session_state[widget_key] not in option_values + [UNSELECTED_LABEL]:
+            st.session_state.pop(widget_key)
+        choices = [UNSELECTED_LABEL, *option_values]
+        current_selection = answers.get(question_key)
+        if isinstance(current_selection, str) and current_selection in option_values:
+            default_option = current_selection
+        default_option = default_option if isinstance(default_option, str) else UNSELECTED_LABEL
+        index = choices.index(default_option)
         selection = st.selectbox(
-            label,
-            options=option_values,
+            display_label,
+            options=choices,
             index=index,
             key=widget_key,
             help=help_text,
-            format_func=lambda value: labels.get(value, value),
+            format_func=lambda value: labels.get(value, value)
+            if value != UNSELECTED_LABEL
+            else UNSELECTED_LABEL,
         )
-        answers[question_key] = selection
-        st.caption(f"Selected record ID: `{selection}`")
+        if selection == UNSELECTED_LABEL:
+            answers.pop(question_key, None)
+        else:
+            answers[question_key] = selection
+            st.caption(f"Selected record ID: `{selection}`")
     elif question_type == "statement":
         answers.pop(question_key, None)
         if widget_key in st.session_state:
@@ -2031,6 +2238,11 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
 
     form_key = f"edit_{prefix}_{original_key}" if prefix else f"edit_{original_key}"
     existing_related_source = question.get("related_record_source")
+    questions_list = schema.get("questions", [])
+    question_index = next(
+        (idx for idx, existing in enumerate(questions_list) if existing is question),
+        None,
+    )
 
     with st.form(form_key):
         st.subheader(f"Edit question: {question.get('label', original_key)}")
@@ -2089,6 +2301,34 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
             question.get("options"),
         )
 
+        with st.container():
+            st.markdown("**Response settings**")
+            required_disabled = question_type == "statement"
+            initial_required = (
+                bool(question.get("required")) if not required_disabled else False
+            )
+            col_required, col_default = st.columns([1, 3])
+            with col_required:
+                required_checkbox = st.checkbox(
+                    "Response required",
+                    value=initial_required,
+                    key=f"{form_key}_required",
+                    help="Respondents must answer before submitting the questionnaire.",
+                    disabled=required_disabled,
+                )
+                if required_disabled:
+                    st.caption("Statements cannot be required.")
+            with col_default:
+                default_value = render_default_answer_input(
+                    f"{form_key}_{question_type}",
+                    question_type,
+                    options,
+                    question.get("default"),
+                )
+
+        required_flag = bool(required_checkbox) if not required_disabled else False
+        prepared_default = _prepare_default_for_storage(question_type, default_value)
+
         with st.expander(
             "Visibility conditions",
             expanded=bool(question.get("show_if")),
@@ -2145,6 +2385,8 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
                     "options",
                     "show_if",
                     "related_record_source",
+                    "required",
+                    "default",
                 }
             }
 
@@ -2167,6 +2409,14 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
                     st.error("Select a record source for related record questions.")
                     return
                 updated_question["related_record_source"] = related_record_source
+            if required_flag and question_type != "statement":
+                updated_question["required"] = True
+            elif "required" in question:
+                updated_question.pop("required", None)
+            if prepared_default is not None:
+                updated_question["default"] = prepared_default
+            elif "default" in question:
+                updated_question.pop("default", None)
 
             for idx, existing in enumerate(schema.get("questions", [])):
                 if existing.get("key") == original_key:
@@ -2224,6 +2474,7 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
                 show_if_json_key = new_show_if_json_key
                 original_key = new_key
 
+            st.session_state[ACTIVE_QUESTION_STATE_KEY] = new_key
             st.session_state[SCHEMA_STATE_KEY] = schema
             st.success("Question updated. Use Publish or Save as Draft to persist changes.")
 
@@ -2252,6 +2503,15 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
             for session_key in list(st.session_state.keys()):
                 if session_key.endswith(target_suffix):
                     st.session_state.pop(session_key)
+            remaining_questions = schema.get("questions", [])
+            if isinstance(remaining_questions, list) and remaining_questions:
+                fallback_index = question_index if question_index is not None else 0
+                fallback_index = max(0, min(fallback_index, len(remaining_questions) - 1))
+                st.session_state[ACTIVE_QUESTION_STATE_KEY] = remaining_questions[
+                    fallback_index
+                ].get("key")
+            else:
+                st.session_state.pop(ACTIVE_QUESTION_STATE_KEY, None)
             st.session_state[SCHEMA_STATE_KEY] = schema
             st.warning("Question removed. Use Publish or Save as Draft to persist changes.")
 
@@ -2263,21 +2523,30 @@ def render_add_question(schema: Dict[str, Any]) -> None:
     """Render the form to create a new question."""
 
     st.subheader("Add new question")
+    st.caption("Configure the essentials, then fine-tune defaults and behaviour.")
     prefix = _state_prefix(schema)
     form_key = f"add_question_{prefix}" if prefix else "add_question"
     with st.form(form_key):
-        key = st.text_input(
-            "Key",
-            help="Unique identifier used in the schema. Letters, numbers, and underscores only.",
-        )
-        label = st.text_input(
-            "Question label",
-            help="Displayed to respondents. Leave blank to reuse the key.",
-        )
+        st.markdown("**Question details**")
+        col_key, col_label = st.columns([1, 2])
+        with col_key:
+            key = st.text_input(
+                "Key",
+                key=f"{form_key}_key",
+                help="Unique identifier used in the schema. Letters, numbers, and underscores only.",
+            )
+        with col_label:
+            label = st.text_input(
+                "Question label",
+                key=f"{form_key}_label",
+                help="Displayed to respondents. Leave blank to reuse the key.",
+            )
         question_type = st.selectbox(
             "Answer type",
             options=QUESTION_TYPES,
+            key=f"{form_key}_type",
             format_func=lambda value: QUESTION_TYPE_LABELS.get(value, value),
+            help="Determines how the answer is captured.",
         )
 
         related_record_source = render_related_record_settings(
@@ -2298,6 +2567,29 @@ def render_add_question(schema: Dict[str, Any]) -> None:
             f"{prefix}_new" if prefix else "new", question_type, None
         )
 
+        st.markdown("**Response settings**")
+        required_disabled = question_type == "statement"
+        col_required, col_default = st.columns([1, 3])
+        with col_required:
+            required_checkbox = st.checkbox(
+                "Response required",
+                key=f"{form_key}_required",
+                help="Respondents must answer before submitting the questionnaire.",
+                disabled=required_disabled,
+            )
+            if required_disabled:
+                st.caption("Statements cannot be required.")
+        with col_default:
+            default_value = render_default_answer_input(
+                f"{form_key}_{question_type}_new",
+                question_type,
+                options,
+                None,
+            )
+
+        required_flag = bool(required_checkbox) if not required_disabled else False
+        prepared_default = _prepare_default_for_storage(question_type, default_value)
+
         with st.expander("Visibility conditions"):
             st.caption(
                 "Use the rule builder below for a guided experience or paste JSON here for advanced control."
@@ -2307,7 +2599,7 @@ def render_add_question(schema: Dict[str, Any]) -> None:
                 placeholder='{"any": [{"field": "q1", "operator": "equals", "value": "Yes"}]}',
             )
 
-        submitted = st.form_submit_button("Add question")
+        submitted = st.form_submit_button("Add question", type="primary")
 
         if submitted:
             if not key:
@@ -2342,9 +2634,14 @@ def render_add_question(schema: Dict[str, Any]) -> None:
                     st.error("Select a record source for related record questions.")
                     return
                 new_question["related_record_source"] = related_record_source
+            if required_flag and question_type != "statement":
+                new_question["required"] = True
+            if prepared_default is not None:
+                new_question["default"] = prepared_default
 
             schema.setdefault("questions", []).append(new_question)
             st.session_state[SCHEMA_STATE_KEY] = schema
+            st.session_state[ACTIVE_QUESTION_STATE_KEY] = key
             st.success("Question added. Use Publish or Save as Draft to persist changes.")
 
 
@@ -2386,11 +2683,20 @@ def main() -> None:
     schema["page"] = selected_questionnaire.setdefault("page", {})
     schema["questions"] = selected_questionnaire.setdefault("questions", [])
     questions = schema.get("questions", [])
+    question_keys = [question.get("key") for question in questions if question.get("key")]
+    active_question_key = st.session_state.get(ACTIVE_QUESTION_STATE_KEY)
+    if question_keys:
+        if active_question_key not in question_keys:
+            active_question_key = question_keys[0]
+            st.session_state[ACTIVE_QUESTION_STATE_KEY] = active_question_key
+    else:
+        st.session_state.pop(ACTIVE_QUESTION_STATE_KEY, None)
+        active_question_key = None
 
     render_page_content_editor(schema)
     st.divider()
 
-    render_question_overview(questions)
+    render_question_overview(schema, active_key=active_question_key)
     st.divider()
 
     with st.expander("Live Preview", expanded=False):
@@ -2416,23 +2722,14 @@ def main() -> None:
         st.session_state[PREVIEW_ANSWERS_STATE_KEY] = preview_state
 
     if questions:
-        option_labels = [
-            f"{question.get('label', question.get('key', '')) or question.get('key', '')} · {question.get('key', '')}"
-            for question in questions
-        ]
-        key_lookup = {
-            label: question.get("key")
-            for label, question in zip(option_labels, questions)
-        }
-        selected_label = st.selectbox(
-            "Select a question to edit",
-            option_labels,
-            help="Pick a question from the list above to adjust its settings.",
+        selected_question = next(
+            (question for question in questions if question.get("key") == active_question_key),
+            None,
         )
-        selected_key = key_lookup.get(selected_label)
-        selected_question = next((q for q in questions if q.get("key") == selected_key), None)
         if selected_question:
             render_question_editor(selected_question, schema)
+        else:
+            st.info("Select a question from the overview to edit its settings.")
     else:
         st.info("No questions defined yet. Add a question below.")
 
