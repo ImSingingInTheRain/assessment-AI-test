@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 import sys
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -21,6 +21,7 @@ RECORD_NAME_KEY = getattr(questionnaire_utils, "RECORD_NAME_KEY", "record_name")
 
 SUBMISSIONS_DIR = Path("assessment/submissions")
 DEFAULT_TABLE_COLUMNS = ("Submission ID", "Submitted at", "Questionnaire")
+SUBMISSION_ID_PARAM = "submission_id"
 
 
 def _parse_timestamp(value: Any) -> Tuple[str, float]:
@@ -52,6 +53,8 @@ def _load_submission(path: Path) -> Dict[str, Any]:
     timestamp, sort_key = _parse_timestamp(payload.get("submitted_at"))
     record["Submitted at"] = timestamp
     record["_sort_key"] = sort_key
+    record["_raw_payload"] = payload
+    record["_path"] = path
 
     record_name = payload.get(RECORD_NAME_KEY)
     if isinstance(record_name, str) and record_name.strip():
@@ -109,6 +112,67 @@ def _strip_private_keys(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any
     return cleaned
 
 
+def _format_option(record: Optional[Dict[str, Any]]) -> str:
+    """Return a human-friendly label for the submission selection."""
+
+    if not record:
+        return "— Select a submission —"
+    submission_id = str(record.get("Submission ID", ""))
+    record_name = str(record.get("Record name", "")).strip()
+    timestamp = str(record.get("Submitted at", "")).strip()
+    parts = [part for part in (record_name or None, submission_id or None, timestamp or None) if part]
+    return " · ".join(parts) if parts else submission_id or "Submission"
+
+
+def _get_query_param(name: str) -> Optional[str]:
+    """Return a query parameter value for ``name`` when available."""
+
+    try:
+        value = st.query_params.get(name)
+    except AttributeError:
+        params = st.experimental_get_query_params()
+        value = params.get(name)
+    if isinstance(value, list):
+        return value[0] if value else None
+    if isinstance(value, str):
+        return value
+    return None
+
+
+def _set_query_param(name: str, value: Optional[str]) -> None:
+    """Store ``value`` for ``name`` in the query string."""
+
+    try:
+        if hasattr(st, "query_params"):
+            params = dict(st.query_params)
+            if value is None:
+                params.pop(name, None)
+            else:
+                params[name] = value
+            st.query_params.clear()
+            for key, val in params.items():
+                st.query_params[key] = val
+        else:
+            params = st.experimental_get_query_params()
+            if value is None:
+                params.pop(name, None)
+            else:
+                params[name] = value
+            st.experimental_set_query_params(**params)
+    except Exception:  # pylint: disable=broad-except
+        # Setting query parameters is a convenience. Ignore failures silently.
+        pass
+
+
+def _rerun() -> None:
+    """Trigger a Streamlit rerun using the available API."""
+
+    try:
+        st.experimental_rerun()
+    except AttributeError:
+        st.rerun()
+
+
 apply_app_theme(page_title="Assessment submissions", page_icon="📝")
 page_header(
     "Assessment submissions",
@@ -143,3 +207,104 @@ else:
             column_order=columns,
         )
         st.markdown("</div>", unsafe_allow_html=True)
+
+    options: List[Optional[Dict[str, Any]]] = [None] + submissions
+    default_index = 0
+    preselected = _get_query_param(SUBMISSION_ID_PARAM)
+    if preselected:
+        for idx, record in enumerate(submissions, start=1):
+            if str(record.get("Submission ID")) == preselected:
+                default_index = idx
+                break
+
+    selected = st.selectbox(
+        "Manage submission",
+        options,
+        index=default_index,
+        format_func=_format_option,
+        key="assessment_submission_selector",
+    )
+
+    if selected:
+        submission_id = str(selected.get("Submission ID"))
+        _set_query_param(SUBMISSION_ID_PARAM, submission_id)
+        st.subheader("Submission details")
+        st.write(
+            f"**Submission ID:** `{submission_id}`  ",
+            f"**Questionnaire:** {selected.get('Questionnaire') or '—'}  ",
+            f"**Submitted at:** {selected.get('Submitted at') or '—'}",
+        )
+
+        payload = selected.get("_raw_payload", {})
+        if isinstance(payload, dict):
+            st.markdown("**Stored payload**")
+            st.json(payload)
+
+        default_text = json.dumps(payload, indent=2, sort_keys=True)
+        editor_key = f"assessment_submission_editor::{submission_id}"
+        widget_key = f"assessment_submission_text::{submission_id}"
+        if editor_key not in st.session_state:
+            st.session_state[editor_key] = default_text
+        edited_text = st.text_area(
+            "Edit submission JSON",
+            value=st.session_state[editor_key],
+            height=300,
+            key=widget_key,
+        )
+        st.session_state[editor_key] = edited_text
+
+        col_save, col_delete = st.columns([3, 1])
+        with col_save:
+            if st.button("Save changes", type="primary", key=f"assessment_save::{submission_id}"):
+                try:
+                    updated_payload = json.loads(edited_text)
+                except json.JSONDecodeError as exc:
+                    st.error(f"Invalid JSON: {exc}.")
+                else:
+                    if not isinstance(updated_payload, dict):
+                        st.error("Submission data must be a JSON object.")
+                    else:
+                        current_id = str(updated_payload.get("id") or "").strip()
+                        if current_id and current_id != submission_id:
+                            st.error(
+                                "The submission ID inside the JSON must match the filename. "
+                                "Please keep the original ID."
+                            )
+                        else:
+                            updated_payload.setdefault("id", submission_id)
+                            path = selected.get("_path")
+                            if isinstance(path, Path):
+                                try:
+                                    with path.open("w", encoding="utf-8") as handle:
+                                        json.dump(updated_payload, handle, indent=2)
+                                        handle.write("\n")
+                                except OSError as exc:
+                                    st.error(f"Failed to save submission: {exc}.")
+                                else:
+                                    st.success("Submission updated successfully.")
+                                    st.session_state.pop(editor_key, None)
+                                    st.session_state.pop(widget_key, None)
+                                    _rerun()
+                            else:
+                                st.error("Unable to determine the submission file path.")
+
+        with col_delete:
+            if st.button(
+                "Delete", type="secondary", key=f"assessment_delete::{submission_id}"
+            ):
+                path = selected.get("_path")
+                if isinstance(path, Path):
+                    try:
+                        path.unlink()
+                    except OSError as exc:
+                        st.error(f"Failed to delete submission: {exc}.")
+                    else:
+                        st.success("Submission deleted successfully.")
+                        st.session_state.pop(editor_key, None)
+                        st.session_state.pop(widget_key, None)
+                        _set_query_param(SUBMISSION_ID_PARAM, None)
+                        _rerun()
+                else:
+                    st.error("Unable to determine the submission file path.")
+    else:
+        _set_query_param(SUBMISSION_ID_PARAM, None)
