@@ -1225,7 +1225,7 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
             expanded=bool(question.get("show_if")),
         ):
             st.caption(
-                "Use the Show rule builder below for a guided experience or paste JSON here for advanced control."
+                "Use the rule builder below for a guided experience or paste JSON here for advanced control."
             )
             show_if_raw = st.text_area(
                 "Show if (JSON)",
@@ -1332,21 +1332,8 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
             st.session_state[SCHEMA_STATE_KEY] = schema
             st.warning("Question removed. Use Publish or Save as Draft to persist changes.")
 
-    builder_toggle_key = f"show_if_builder_visible_{original_key}"
-    if builder_toggle_key not in st.session_state:
-        st.session_state[builder_toggle_key] = bool(question.get("show_if"))
-
-    show_builder = st.checkbox(
-        "Show rule builder",
-        key=builder_toggle_key,
-        help="Toggle to configure visibility rules without editing JSON manually.",
-    )
-
-    with st.expander("Rule builder", expanded=show_builder):
-        if show_builder:
-            render_show_if_builder(question, schema, show_if_json_key)
-        else:
-            st.caption("Enable the toggle above to edit visibility rules with the guided builder.")
+    with st.expander("Rule builder", expanded=bool(question.get("show_if"))):
+        render_show_if_builder(question, schema, show_if_json_key)
 
 
 def render_add_question(schema: Dict[str, Any]) -> None:
@@ -1378,7 +1365,7 @@ def render_add_question(schema: Dict[str, Any]) -> None:
 
         with st.expander("Visibility conditions"):
             st.caption(
-                "Use the Show rule builder below for a guided experience or paste JSON here for advanced control."
+                "Use the rule builder below for a guided experience or paste JSON here for advanced control."
             )
             show_if_raw = st.text_area(
                 "Show if (JSON)",
