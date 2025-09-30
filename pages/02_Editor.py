@@ -21,12 +21,16 @@ if str(PROJECT_ROOT) not in sys.path:
 from Home import load_schema
 from lib.github_backend import GitHubBackend, create_branch, ensure_pr, put_file
 from lib.form_store import load_combined_schema, local_form_path, resolve_remote_form_path
-from lib.questionnaire_utils import (
-    EDITOR_SELECTED_STATE_KEY,
-    RECORD_NAME_FIELD,
-    RECORD_NAME_TYPE,
-    normalize_questionnaires,
-)
+import lib.questionnaire_utils as questionnaire_utils
+
+EDITOR_SELECTED_STATE_KEY = questionnaire_utils.EDITOR_SELECTED_STATE_KEY
+normalize_questionnaires = questionnaire_utils.normalize_questionnaires
+
+# ``RECORD_NAME_FIELD`` and ``RECORD_NAME_TYPE`` are new additions. Older
+# ``questionnaire_utils`` modules won't define them which used to crash the page
+# during import. ``getattr`` keeps the editor working with those deployments.
+RECORD_NAME_FIELD = getattr(questionnaire_utils, "RECORD_NAME_FIELD", "_record_name")
+RECORD_NAME_TYPE = getattr(questionnaire_utils, "RECORD_NAME_TYPE", "record_name")
 from lib.related_records import (
     RELATED_RECORD_SOURCES,
     load_related_record_options,
