@@ -1,0 +1,11 @@
+{
+  "id": "6e25c5a873f64b53957df9eeac121415",
+  "questionnaire_key": "system_registration",
+  "submitted_at": "2025-09-30T20:26:39.254026+00:00",
+  "answers": {
+    "system-type": "AI system",
+    "description": "Chatbot assistant",
+    "name-system": "ChatGPT"
+  },
+  "record_name": "ChatGPT"
+}
