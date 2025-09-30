@@ -215,7 +215,10 @@ def render_question(
     help_text = question.get("help")
     default_value = answers.get(question_key, question.get("default"))
 
-    question_intro = f"Question {index + 1} of {total}"
+    if question_type == "statement":
+        question_intro = "Statement"
+    else:
+        question_intro = f"Question {index + 1} of {total}"
 
     st.markdown(
         "<div class='question-card'>",
@@ -280,6 +283,11 @@ def render_question(
             label_visibility="collapsed",
         )
         answers[question_key] = text_value
+    elif question_type == "statement":
+        answers.pop(question_key, None)
+        if widget_key in st.session_state:
+            st.session_state.pop(widget_key)
+        st.caption("No response required.")
     else:
         st.warning(f"Unsupported question type: {question_type}")
 
