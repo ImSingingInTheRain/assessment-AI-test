@@ -410,7 +410,7 @@ else:
             payload = selected.get("_raw_payload", {})
             if not isinstance(payload, dict):
                 st.error("Submission payload is not a JSON object and cannot be edited visually.")
-                return
+                st.stop()
 
             answers = payload.get("answers", {})
             if not isinstance(answers, dict):
