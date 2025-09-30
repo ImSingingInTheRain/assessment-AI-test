@@ -1,0 +1,21 @@
+{
+  "id": "506740374dc4477fa75124b594375069",
+  "questionnaire_key": "assessment",
+  "submitted_at": "2025-09-30T21:06:37.378806+00:00",
+  "answers": {
+    "name": "New test",
+    "related-sytem": "6e25c5a873f64b53957df9eeac121415",
+    "q_area": "Research",
+    "q_handles_personal_data": "Yes",
+    "q_sensitive_categories": [
+      "Health",
+      "Biometric"
+    ],
+    "use-AI": "Yes",
+    "high-risk": [
+      "Biometric categorization"
+    ],
+    "rd-exception": "No"
+  },
+  "record_name": "New test"
+}
