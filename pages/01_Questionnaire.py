@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from html import escape as html_escape
 from typing import Any, Dict, List, Optional, Sequence
+import uuid
 
 import requests
 import streamlit as st
@@ -18,6 +20,7 @@ from lib.form_store import (
     forms_from_payloads,
     resolve_remote_form_path,
 )
+from lib.github_backend import GitHubBackend
 from lib.questionnaire_utils import (
     DEFAULT_QUESTIONNAIRE_KEY,
     RUNNER_SELECTED_STATE_KEY,
@@ -63,7 +66,9 @@ def _github_settings() -> Dict[str, Any]:
     path = secrets.get("path", "form_schemas/{form_key}/form_schema.json")
     branch = secrets.get("branch", "main")
     token = secrets.get("token")
+    api_url = secrets.get("api_url")
     forms_config = secrets.get("forms", [])
+    submissions_path = secrets.get("system_registration_submissions_path")
 
     configured_forms: List[str] = []
     if isinstance(forms_config, Sequence) and not isinstance(forms_config, (str, bytes)):
@@ -74,10 +79,16 @@ def _github_settings() -> Dict[str, Any]:
         path = st.secrets.get("github_file_path", path)
         branch = st.secrets.get("github_branch", branch)
         token = st.secrets.get("github_token", token)
+        api_url = st.secrets.get("github_api_url", api_url)
     if not configured_forms:
         secrets_forms = st.secrets.get("github_forms")
         if isinstance(secrets_forms, Sequence) and not isinstance(secrets_forms, (str, bytes)):
             configured_forms = [str(item).strip() for item in secrets_forms if str(item).strip()]
+    if not submissions_path:
+        submissions_path = st.secrets.get(
+            "github_system_registration_submissions_path",
+            st.secrets.get("system_registration_submissions_path", submissions_path),
+        )
 
     if repo and path:
         return {
@@ -86,6 +97,8 @@ def _github_settings() -> Dict[str, Any]:
             "branch": branch,
             "token": token,
             "forms": configured_forms,
+            "api_url": api_url,
+            "system_registration_submissions_path": submissions_path,
         }
     return {}
 
@@ -136,6 +149,75 @@ def load_schema_from_github() -> Dict[str, Any]:
 
 ANSWERS_STATE_KEY = "questionnaire_answers"
 QUESTIONNAIRE_QUERY_PARAM = "questionnaire"
+SYSTEM_REGISTRATION_KEY = "system_registration"
+DEFAULT_SYSTEM_REGISTRATION_SUBMISSIONS_PATH = (
+    "system_registration/submissions/{submission_id}.json"
+)
+
+
+def _system_registration_submission_path(settings: Dict[str, Any], submission_id: str) -> Optional[str]:
+    """Build the storage path for a system registration submission."""
+
+    template = settings.get("system_registration_submissions_path") or DEFAULT_SYSTEM_REGISTRATION_SUBMISSIONS_PATH
+    try:
+        return template.format(submission_id=submission_id)
+    except KeyError as exc:
+        st.error(
+            "Invalid system registration submissions path template; "
+            f"missing placeholder: {exc}."
+        )
+        return None
+
+
+def store_system_registration_submission(answers: Dict[str, Any]) -> Optional[str]:
+    """Persist a system registration submission to GitHub and return its ID."""
+
+    settings = _github_settings()
+    token = settings.get("token")
+    repo = settings.get("repo")
+    branch = settings.get("branch", "main")
+    api_url = settings.get("api_url") or "https://api.github.com"
+
+    if not token or not repo:
+        st.error("GitHub configuration is required to store system registrations.")
+        return None
+
+    submission_id = uuid.uuid4().hex
+    storage_path = _system_registration_submission_path(settings, submission_id)
+    if not storage_path:
+        return None
+
+    try:
+        serialisable_answers = json.loads(json.dumps(answers))
+    except TypeError as exc:
+        st.error(f"System registration answers are not serialisable: {exc}.")
+        return None
+
+    payload = {
+        "id": submission_id,
+        "questionnaire_key": SYSTEM_REGISTRATION_KEY,
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
+        "answers": serialisable_answers,
+    }
+
+    backend = GitHubBackend(
+        token=token,
+        repo=repo,
+        path=storage_path,
+        branch=branch,
+        api_url=api_url,
+    )
+
+    try:
+        backend.write_json(
+            payload,
+            message=f"Add system registration submission {submission_id}",
+        )
+    except Exception as exc:  # pylint: disable=broad-except
+        st.error(f"Failed to store system registration submission: {exc}")
+        return None
+
+    return submission_id
 
 
 def _normalise_paragraphs(value: Any) -> List[str]:
@@ -567,6 +649,12 @@ def main() -> None:
 
     if st.button(submit_label, key=f"submit_{selected_key}"):
         st.success(submit_success_message)
+
+        if selected_key == SYSTEM_REGISTRATION_KEY:
+            submission_id = store_system_registration_submission(answers)
+            if submission_id:
+                st.info(f"Submission saved with ID `{submission_id}`.")
+
         if show_answers_summary:
             st.json(answers)
 
