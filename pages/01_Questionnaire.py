@@ -13,7 +13,7 @@ import uuid
 import requests
 import streamlit as st
 
-from Home import load_schema
+from Home import RELATED_SYSTEM_FIELD, load_schema
 from lib.form_store import (
     available_form_keys,
     combine_forms,
@@ -257,6 +257,85 @@ def _assessment_submission_path(settings: Dict[str, Any], submission_id: str) ->
     )
 
 
+def _normalise_system_id(value: Any) -> str:
+    """Return a cleaned identifier for a related system."""
+
+    if isinstance(value, str):
+        return value.strip()
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _collect_triggered_risks(
+    answers: Dict[str, Any], *, system_id: str = ""
+) -> List[Dict[str, Any]]:
+    """Return risks whose logic evaluates to ``True`` for ``answers``."""
+
+    try:
+        schema = load_schema()
+    except Exception:  # pragma: no cover - defensive against cache issues
+        schema = {}
+
+    if not isinstance(schema, dict):
+        return []
+
+    try:
+        questionnaire = questionnaire_utils.get_questionnaire(schema, DEFAULT_QUESTIONNAIRE_KEY)
+    except Exception:  # pragma: no cover - fall back gracefully
+        questionnaire = {}
+
+    risks = questionnaire.get("risks", [])
+    if not isinstance(risks, list):
+        return []
+
+    triggered: List[Dict[str, Any]] = []
+    for risk in risks:
+        if not isinstance(risk, dict):
+            continue
+
+        logic = risk.get("logic")
+        if logic is None:
+            continue
+        if not isinstance(logic, dict):
+            continue
+
+        try:
+            is_triggered = eval_rule(logic, answers)
+        except Exception:  # pragma: no cover - guard against malformed rules
+            continue
+
+        if not is_triggered:
+            continue
+
+        entry: Dict[str, Any] = {}
+        key = risk.get("key")
+        name = risk.get("name")
+        level = risk.get("level")
+        mitigations = risk.get("mitigations")
+
+        if isinstance(key, str) and key.strip():
+            entry["key"] = key.strip()
+        if isinstance(name, str) and name.strip():
+            entry["name"] = name.strip()
+        if isinstance(level, str) and level.strip():
+            entry["level"] = level.strip()
+        if isinstance(mitigations, list):
+            cleaned_mitigations = [
+                str(item).strip()
+                for item in mitigations
+                if isinstance(item, str) and str(item).strip()
+            ]
+            if cleaned_mitigations:
+                entry["mitigations"] = cleaned_mitigations
+        if system_id:
+            entry["system_id"] = system_id
+
+        triggered.append(entry)
+
+    return triggered
+
+
 def store_system_registration_submission(
     answers: Dict[str, Any],
     *,
@@ -354,7 +433,15 @@ def store_assessment_submission(
         st.error(f"Assessment answers are not serialisable: {exc}.")
         return None
 
+    related_system_id = ""
+    triggered_risks: List[Dict[str, Any]] = []
     if isinstance(serialisable_answers, dict):
+        related_system_id = _normalise_system_id(
+            serialisable_answers.get(RELATED_SYSTEM_FIELD)
+        )
+        triggered_risks = _collect_triggered_risks(
+            serialisable_answers, system_id=related_system_id
+        )
         extracted_name = serialisable_answers.pop(RECORD_NAME_FIELD, None)
     else:
         extracted_name = None
@@ -374,6 +461,10 @@ def store_assessment_submission(
 
     if record_name_value:
         payload[RECORD_NAME_KEY] = record_name_value
+    if related_system_id:
+        payload["related_system_id"] = related_system_id
+    if triggered_risks:
+        payload["risks"] = triggered_risks
 
     backend = GitHubBackend(
         token=token,
