@@ -87,7 +87,8 @@
         "Biometric categorization",
         "Biometric identification",
         "Recruitment",
-        "Employee management"
+        "Employee management",
+        "None applies"
       ],
       "show_if": {
         "all": [
@@ -189,6 +190,20 @@
               "Recruitment",
               "Employee management"
             ]
+          }
+        ]
+      }
+    },
+    {
+      "key": "risk2",
+      "name": "Limited AI risk",
+      "level": "limited",
+      "logic": {
+        "all": [
+          {
+            "operator": "contains_any",
+            "field": "high-risk",
+            "value": []
           }
         ]
       }
