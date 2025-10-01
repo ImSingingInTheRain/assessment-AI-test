@@ -172,5 +172,26 @@
     "version": 1,
     "status": "published",
     "published_at": "2024-01-15T10:30:00Z"
-  }
+  },
+  "risks": [
+    {
+      "key": "risk1",
+      "name": "High Risk AI",
+      "level": "high",
+      "logic": {
+        "all": [
+          {
+            "operator": "contains_any",
+            "field": "high-risk",
+            "value": [
+              "Biometric categorization",
+              "Biometric identification",
+              "Recruitment",
+              "Employee management"
+            ]
+          }
+        ]
+      }
+    }
+  ]
 }
