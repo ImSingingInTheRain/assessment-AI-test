@@ -477,6 +477,7 @@ def schema_for_storage(schema: Dict[str, Any]) -> Tuple[str, Dict[str, Any], Dic
     questionnaire_section["label"] = selected.get("label", questionnaire_section.get("key", active_id))
     questionnaire_section["page"] = selected.get("page", {})
     questionnaire_section["questions"] = selected.get("questions", [])
+    questionnaire_section["risks"] = selected.get("risks", [])
 
     meta = selected.get("meta")
     if isinstance(meta, dict):
