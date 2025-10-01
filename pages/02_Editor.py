@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import sys
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -79,6 +80,28 @@ RISK_BUILDER_STATE_KEY = "editor_risk_builder"
 UNSELECTED_LABEL = "— Select an option —"
 
 RISK_LEVEL_OPTIONS = ["limited", "high", "unacceptable"]
+
+
+@contextmanager
+def section_card(
+    title: Optional[str] = None,
+    description: Optional[str] = None,
+) -> Any:
+    """Render a styled container with optional title and description."""
+
+    container = st.container()
+    container.markdown("<div class='app-section-card'>", unsafe_allow_html=True)
+    if title:
+        container.markdown(f"<h3>{title}</h3>", unsafe_allow_html=True)
+    if description:
+        container.markdown(
+            f"<p class='app-section-card__description'>{description}</p>",
+            unsafe_allow_html=True,
+        )
+    try:
+        yield container
+    finally:
+        container.markdown("</div>", unsafe_allow_html=True)
 
 
 def _active_questionnaire_id(schema: Dict[str, Any]) -> str:
@@ -781,66 +804,67 @@ def render_question_overview(
 
     questions = schema.get("questions", [])
 
-    st.subheader("Question overview")
-    st.caption("Reorder questions and jump into editing directly from the list below.")
+    with section_card(
+        "Question overview",
+        "Reorder questions and jump into editing directly from the list below.",
+    ) as card:
+        if not questions:
+            card.info("Questions will appear here once added.")
+            return
 
-    if not questions:
-        st.info("Questions will appear here once added.")
-        return
+        for index, question in enumerate(questions):
+            key = question.get("key", "")
+            label = question.get("label") or key or f"Question {index + 1}"
+            type_label = QUESTION_TYPE_LABELS.get(question.get("type"), question.get("type", ""))
+            required = bool(question.get("required"))
+            is_active = key and key == active_key
 
-    for index, question in enumerate(questions):
-        key = question.get("key", "")
-        label = question.get("label") or key or f"Question {index + 1}"
-        type_label = QUESTION_TYPE_LABELS.get(question.get("type"), question.get("type", ""))
-        required = bool(question.get("required"))
-        is_active = key and key == active_key
+            row = card.container()
+            with row:
+                cols = st.columns([0.6, 3.5, 1.4, 1.4, 1.3, 1.3])
+                cols[0].markdown(f"**{index + 1}**")
+                label_text = f"**{label}**" if label else ""
+                if key:
+                    label_text = f"{label_text}\n\n`{key}`"
+                if is_active:
+                    label_text = f":blue[{label_text}]"
+                cols[1].markdown(label_text or "—")
+                cols[2].write(type_label or "—")
+                cols[3].write("Required" if required else "Optional")
 
-        row = st.container()
-        with row:
-            cols = st.columns([0.6, 3.5, 1.4, 1.4, 1.3, 1.3])
-            cols[0].markdown(f"**{index + 1}**")
-            label_text = f"**{label}**" if label else ""
-            if key:
-                label_text = f"{label_text}\n\n`{key}`"
-            if is_active:
-                label_text = f":blue[{label_text}]"
-            cols[1].markdown(label_text or "—")
-            cols[2].write(type_label or "—")
-            cols[3].write("Required" if required else "Optional")
+                move_up = cols[4].button(
+                    "▲",
+                    key=f"move_up_{key}_{index}",
+                    disabled=index == 0,
+                    help="Move question up",
+                )
+                move_down = cols[4].button(
+                    "▼",
+                    key=f"move_down_{key}_{index}",
+                    disabled=index == len(questions) - 1,
+                    help="Move question down",
+                )
 
-            move_up = cols[4].button(
-                "▲",
-                key=f"move_up_{key}_{index}",
-                disabled=index == 0,
-                help="Move question up",
-            )
-            move_down = cols[4].button(
-                "▼",
-                key=f"move_down_{key}_{index}",
-                disabled=index == len(questions) - 1,
-                help="Move question down",
-            )
+                if move_up:
+                    if _move_question(schema, key, -1):
+                        st.session_state[SCHEMA_STATE_KEY] = schema
+                        st.session_state[ACTIVE_QUESTION_STATE_KEY] = key
+                        _rerun_app()
 
-            if move_up:
-                if _move_question(schema, key, -1):
-                    st.session_state[SCHEMA_STATE_KEY] = schema
+                if move_down:
+                    if _move_question(schema, key, 1):
+                        st.session_state[SCHEMA_STATE_KEY] = schema
+                        st.session_state[ACTIVE_QUESTION_STATE_KEY] = key
+                        _rerun_app()
+
+                if cols[5].button(
+                    "Edit",
+                    key=f"edit_question_{key}_{index}",
+                    help="Open this question in the editor",
+                    type="primary" if is_active else "secondary",
+                ):
                     st.session_state[ACTIVE_QUESTION_STATE_KEY] = key
                     _rerun_app()
-
-            if move_down:
-                if _move_question(schema, key, 1):
-                    st.session_state[SCHEMA_STATE_KEY] = schema
-                    st.session_state[ACTIVE_QUESTION_STATE_KEY] = key
-                    _rerun_app()
-
-            if cols[5].button(
-                "Edit",
-                key=f"edit_question_{key}_{index}",
-                help="Open this question in the editor",
-                type="primary" if is_active else "secondary",
-            ):
-                st.session_state[ACTIVE_QUESTION_STATE_KEY] = key
-                _rerun_app()
 
 
 def render_risk_overview(
@@ -850,91 +874,92 @@ def render_risk_overview(
 
     risks = schema.get("risks", [])
 
-    st.subheader("Risk identification")
-    st.caption(
-        "Use rules to flag risks based on questionnaire answers, assign a level, and record mitigating controls."
-    )
+    with section_card(
+        "Risk identification",
+        "Use rules to flag risks based on questionnaire answers, assign a level, and record mitigating controls.",
+    ) as card:
+        if not risks:
+            card.info("Risks will appear here once added.")
+            return
 
-    if not risks:
-        st.info("Risks will appear here once added.")
-        return
+        for index, risk in enumerate(risks):
+            key = risk.get("key", "")
+            name = risk.get("name") or key or f"Risk {index + 1}"
+            level = risk.get("level", "")
+            mitigations = risk.get("mitigations")
+            mitigation_count = len(mitigations) if isinstance(mitigations, list) else 0
+            is_active = key and key == active_key
 
-    for index, risk in enumerate(risks):
-        key = risk.get("key", "")
-        name = risk.get("name") or key or f"Risk {index + 1}"
-        level = risk.get("level", "")
-        mitigations = risk.get("mitigations")
-        mitigation_count = len(mitigations) if isinstance(mitigations, list) else 0
-        is_active = key and key == active_key
+            row = card.container()
+            with row:
+                cols = st.columns([0.6, 3.0, 1.6, 1.6, 1.1, 1.1, 1.1])
+                cols[0].markdown(f"**{index + 1}**")
+                name_text = f"**{name}**" if name else ""
+                if key:
+                    name_text = f"{name_text}\n\n`{key}`"
+                if is_active:
+                    name_text = f":blue[{name_text}]"
+                cols[1].markdown(name_text or "—")
+                cols[2].write(level.title() if isinstance(level, str) and level else "—")
+                cols[3].write(
+                    f"{mitigation_count} mitigation{'s' if mitigation_count != 1 else ''}"
+                    if mitigation_count
+                    else "No mitigations"
+                )
 
-        row = st.container()
-        with row:
-            cols = st.columns([0.6, 3.0, 1.6, 1.6, 1.1, 1.1, 1.1])
-            cols[0].markdown(f"**{index + 1}**")
-            name_text = f"**{name}**" if name else ""
-            if key:
-                name_text = f"{name_text}\n\n`{key}`"
-            if is_active:
-                name_text = f":blue[{name_text}]"
-            cols[1].markdown(name_text or "—")
-            cols[2].write(level.title() if isinstance(level, str) and level else "—")
-            cols[3].write(
-                f"{mitigation_count} mitigation{'s' if mitigation_count != 1 else ''}"
-                if mitigation_count
-                else "No mitigations"
-            )
+                move_up = cols[4].button(
+                    "▲",
+                    key=f"move_risk_up_{key}_{index}",
+                    disabled=index == 0,
+                    help="Move risk up",
+                )
+                move_down = cols[4].button(
+                    "▼",
+                    key=f"move_risk_down_{key}_{index}",
+                    disabled=index == len(risks) - 1,
+                    help="Move risk down",
+                )
 
-            move_up = cols[4].button(
-                "▲",
-                key=f"move_risk_up_{key}_{index}",
-                disabled=index == 0,
-                help="Move risk up",
-            )
-            move_down = cols[4].button(
-                "▼",
-                key=f"move_risk_down_{key}_{index}",
-                disabled=index == len(risks) - 1,
-                help="Move risk down",
-            )
+                if move_up:
+                    if _move_risk(schema, key, -1):
+                        st.session_state[SCHEMA_STATE_KEY] = schema
+                        st.session_state[ACTIVE_RISK_STATE_KEY] = key
+                        _rerun_app()
 
-            if move_up:
-                if _move_risk(schema, key, -1):
-                    st.session_state[SCHEMA_STATE_KEY] = schema
+                if move_down:
+                    if _move_risk(schema, key, 1):
+                        st.session_state[SCHEMA_STATE_KEY] = schema
+                        st.session_state[ACTIVE_RISK_STATE_KEY] = key
+                        _rerun_app()
+
+                if cols[5].button(
+                    "Edit",
+                    key=f"edit_risk_{key}_{index}",
+                    help="Open this risk in the editor",
+                    type="primary" if is_active else "secondary",
+                ):
                     st.session_state[ACTIVE_RISK_STATE_KEY] = key
                     _rerun_app()
 
-            if move_down:
-                if _move_risk(schema, key, 1):
+                if cols[6].button(
+                    "Delete",
+                    key=f"delete_risk_{key}_{index}",
+                    help="Remove this risk from the questionnaire",
+                ):
+                    schema["risks"] = [
+                        item for item in risks if item.get("key") != key
+                    ]
+                    _remove_risk_state(schema, key)
+                    if st.session_state.get(ACTIVE_RISK_STATE_KEY) == key:
+                        remaining = schema.get("risks", [])
+                        st.session_state[ACTIVE_RISK_STATE_KEY] = (
+                            remaining[0].get("key") if remaining else None
+                        )
                     st.session_state[SCHEMA_STATE_KEY] = schema
-                    st.session_state[ACTIVE_RISK_STATE_KEY] = key
-                    _rerun_app()
-
-            if cols[5].button(
-                "Edit",
-                key=f"edit_risk_{key}_{index}",
-                help="Open this risk in the editor",
-                type="primary" if is_active else "secondary",
-            ):
-                st.session_state[ACTIVE_RISK_STATE_KEY] = key
-                _rerun_app()
-
-            if cols[6].button(
-                "Delete",
-                key=f"delete_risk_{key}_{index}",
-                help="Remove this risk from the questionnaire",
-            ):
-                schema["risks"] = [
-                    item for item in risks if item.get("key") != key
-                ]
-                _remove_risk_state(schema, key)
-                if st.session_state.get(ACTIVE_RISK_STATE_KEY) == key:
-                    remaining = schema.get("risks", [])
-                    st.session_state[ACTIVE_RISK_STATE_KEY] = (
-                        remaining[0].get("key") if remaining else None
+                    card.warning(
+                        "Risk removed. Use Publish or Save as Draft to persist changes."
                     )
-                st.session_state[SCHEMA_STATE_KEY] = schema
-                st.warning("Risk removed. Use Publish or Save as Draft to persist changes.")
-                _rerun_app()
+                    _rerun_app()
 
 
 
@@ -1605,116 +1630,127 @@ def render_risk_editor(risk: Dict[str, Any], schema: Dict[str, Any]) -> None:
     mitigations = risk.get("mitigations") if isinstance(risk.get("mitigations"), list) else []
     mitigations_text = "\n".join(str(item) for item in mitigations) if mitigations else ""
 
-    with st.form(form_key):
-        display_name = risk.get("name") or original_key or "Risk"
-        st.subheader(f"Edit risk: {display_name}")
+    display_name = (risk.get("name") or original_key or "Risk").strip() or "Risk"
+    with section_card(
+        f"Edit risk: {display_name}",
+        "Update the identifier, level, and recommended mitigations for this risk.",
+    ) as card:
+        form = card.form(form_key)
+        with form:
+            key_input = st.text_input(
+                "Key",
+                value=original_key,
+                help="Unique identifier used in the schema. Letters, numbers, and underscores only.",
+            )
+            name_input = st.text_input(
+                "Name",
+                value=risk.get("name", ""),
+                help="Human-friendly label describing the risk.",
+            )
+            level_options = RISK_LEVEL_OPTIONS
+            current_level = (
+                risk.get("level") if risk.get("level") in level_options else level_options[0]
+            )
+            level_input = st.selectbox(
+                "Risk level",
+                options=level_options,
+                index=level_options.index(current_level),
+                format_func=lambda value: value.title(),
+                help="Choose the severity level that should be applied when this risk is triggered.",
+            )
+            mitigations_input = st.text_area(
+                "Mitigating controls",
+                value=mitigations_text,
+                help="Optional. Enter one control per line to capture recommendations.",
+            )
 
-        key_input = st.text_input(
-            "Key",
-            value=original_key,
-            help="Unique identifier used in the schema. Letters, numbers, and underscores only.",
-        )
-        name_input = st.text_input(
-            "Name",
-            value=risk.get("name", ""),
-            help="Human-friendly label describing the risk.",
-        )
-        level_options = RISK_LEVEL_OPTIONS
-        current_level = risk.get("level") if risk.get("level") in level_options else level_options[0]
-        level_input = st.selectbox(
-            "Risk level",
-            options=level_options,
-            index=level_options.index(current_level),
-            format_func=lambda value: value.title(),
-            help="Choose the severity level that should be applied when this risk is triggered.",
-        )
-        mitigations_input = st.text_area(
-            "Mitigating controls",
-            value=mitigations_text,
-            help="Optional. Enter one control per line to capture recommendations.",
-        )
+            submitted = form.form_submit_button("Save risk")
 
-        submitted = st.form_submit_button("Save risk")
+        if submitted:
+            new_key = key_input.strip()
+            if not new_key:
+                st.error("Key is required.")
+                return
 
-    if submitted:
-        new_key = key_input.strip()
-        if not new_key:
-            st.error("Key is required.")
-            return
+            duplicate = any(
+                existing.get("key") == new_key and existing is not risk
+                for existing in schema.get("risks", [])
+            )
+            if duplicate:
+                st.error("A risk with this key already exists.")
+                return
 
-        duplicate = any(
-            existing.get("key") == new_key and existing is not risk
-            for existing in schema.get("risks", [])
-        )
-        if duplicate:
-            st.error("A risk with this key already exists.")
-            return
+            name_value = name_input.strip()
+            if not name_value:
+                name_value = new_key
 
-        name_value = name_input.strip()
-        if not name_value:
-            name_value = new_key
+            mitigations_list = [
+                line.strip() for line in mitigations_input.splitlines() if line.strip()
+            ]
 
-        mitigations_list = [line.strip() for line in mitigations_input.splitlines() if line.strip()]
+            risk["key"] = new_key
+            risk["name"] = name_value
+            risk["level"] = level_input
+            if mitigations_list:
+                risk["mitigations"] = mitigations_list
+            elif "mitigations" in risk:
+                risk.pop("mitigations", None)
 
-        risk["key"] = new_key
-        risk["name"] = name_value
-        risk["level"] = level_input
-        if mitigations_list:
-            risk["mitigations"] = mitigations_list
-        elif "mitigations" in risk:
-            risk.pop("mitigations", None)
+            if new_key != original_key:
+                _rename_risk_state(schema, original_key, new_key)
+                pattern = f"_{prefix}_{original_key}" if prefix else f"_{original_key}"
+                for session_key in list(st.session_state.keys()):
+                    if session_key.startswith("risk_") and pattern in session_key:
+                        st.session_state.pop(session_key)
 
-        if new_key != original_key:
-            _rename_risk_state(schema, original_key, new_key)
-            pattern = f"_{prefix}_{original_key}" if prefix else f"_{original_key}"
-            for session_key in list(st.session_state.keys()):
-                if session_key.startswith("risk_") and pattern in session_key:
-                    st.session_state.pop(session_key)
+            st.session_state[SCHEMA_STATE_KEY] = schema
+            st.session_state[ACTIVE_RISK_STATE_KEY] = new_key
+            st.success("Risk updated. Use Publish or Save as Draft to persist changes.")
 
-        st.session_state[SCHEMA_STATE_KEY] = schema
-        st.session_state[ACTIVE_RISK_STATE_KEY] = new_key
-        st.success("Risk updated. Use Publish or Save as Draft to persist changes.")
+        with card.expander("Risk logic builder", expanded=bool(risk.get("logic"))):
+            render_risk_rule_builder(risk, schema)
 
-    with st.expander("Risk logic builder", expanded=bool(risk.get("logic"))):
-        render_risk_rule_builder(risk, schema)
+    if not submitted:
+        return
 
 
 def render_add_risk(schema: Dict[str, Any]) -> None:
     """Render the form to create a new risk definition."""
 
-    st.subheader("Add new risk")
-    st.caption("Configure the basics, then use the logic builder to define when it applies.")
-
     prefix = _state_prefix(schema)
     form_key = f"add_risk_{prefix}" if prefix else "add_risk"
+    with section_card(
+        "Add new risk",
+        "Configure the basics, then use the logic builder to define when it applies.",
+    ) as card:
+        form = card.form(form_key)
+        with form:
+            key_input = st.text_input(
+                "Key",
+                key=f"{form_key}_key",
+                help="Unique identifier used in the schema. Letters, numbers, and underscores only.",
+            )
+            name_input = st.text_input(
+                "Name",
+                key=f"{form_key}_name",
+                help="Human-friendly name for this risk.",
+            )
+            level_input = st.selectbox(
+                "Risk level",
+                options=RISK_LEVEL_OPTIONS,
+                format_func=lambda value: value.title(),
+                help="Choose the severity level for this risk.",
+            )
+            mitigations_input = st.text_area(
+                "Mitigating controls",
+                key=f"{form_key}_mitigations",
+                help="Optional list of recommended controls, one per line.",
+            )
 
-    with st.form(form_key):
-        key_input = st.text_input(
-            "Key",
-            key=f"{form_key}_key",
-            help="Unique identifier used in the schema. Letters, numbers, and underscores only.",
-        )
-        name_input = st.text_input(
-            "Name",
-            key=f"{form_key}_name",
-            help="Human-friendly name for this risk.",
-        )
-        level_input = st.selectbox(
-            "Risk level",
-            options=RISK_LEVEL_OPTIONS,
-            format_func=lambda value: value.title(),
-            help="Choose the severity level for this risk.",
-        )
-        mitigations_input = st.text_area(
-            "Mitigating controls",
-            key=f"{form_key}_mitigations",
-            help="Optional list of recommended controls, one per line.",
-        )
+            submitted = form.form_submit_button("Create risk")
 
-        submitted = st.form_submit_button("Create risk")
-
-    if not submitted:
-        return
+        if not submitted:
+            return
 
     new_key = key_input.strip()
     if not new_key:
@@ -2026,43 +2062,47 @@ def render_page_content_editor(schema: Dict[str, Any]) -> None:
         else DEFAULT_SHOW_ANSWERS_SUMMARY
     )
 
-    st.subheader("Page content")
-    with st.form("page_content"):
-        page_title = st.text_input("Page title", value=page_title_value)
-        show_intro = st.checkbox(
-            "Show introduction", value=show_introduction_value
-        )
-        intro_heading = st.text_input(
-            "Introduction heading",
-            value=intro_heading_value,
-            help="Supports emoji and plain text.",
-        )
-        intro_paragraphs = st.text_area(
-            "Introduction paragraphs (one per line)",
-            value=intro_paragraphs_value,
-            help="Each line becomes a separate paragraph in the introduction card.",
-        )
-        submit_label = st.text_input("Submit button label", value=submit_label_value)
-        submit_success = st.text_area(
-            "Submission success message",
-            value=submit_success_value,
-        )
-        show_answers_summary = st.checkbox(
-            "Show answers after submission",
-            value=show_answers_summary_value,
-            help="Displays the captured answers below the success message.",
-        )
-        show_debug = st.checkbox(
-            "Show debug answers expander",
-            value=show_debug_value,
-            help="Controls whether the questionnaire page shows the answers expander.",
-        )
-        debug_label = st.text_input(
-            "Debug expander label",
-            value=debug_label_value,
-            help="Used as the label for the debug answers expander.",
-        )
-        submitted = st.form_submit_button("Save page content")
+    with section_card(
+        "Page content",
+        "Control the introduction, success messaging, and debug options shown to respondents.",
+    ) as card:
+        form = card.form("page_content")
+        with form:
+            page_title = form.text_input("Page title", value=page_title_value)
+            show_intro = form.checkbox(
+                "Show introduction", value=show_introduction_value
+            )
+            intro_heading = form.text_input(
+                "Introduction heading",
+                value=intro_heading_value,
+                help="Supports emoji and plain text.",
+            )
+            intro_paragraphs = form.text_area(
+                "Introduction paragraphs (one per line)",
+                value=intro_paragraphs_value,
+                help="Each line becomes a separate paragraph in the introduction card.",
+            )
+            submit_label = form.text_input("Submit button label", value=submit_label_value)
+            submit_success = form.text_area(
+                "Submission success message",
+                value=submit_success_value,
+            )
+            show_answers_summary = form.checkbox(
+                "Show answers after submission",
+                value=show_answers_summary_value,
+                help="Displays the captured answers below the success message.",
+            )
+            show_debug = form.checkbox(
+                "Show debug answers expander",
+                value=show_debug_value,
+                help="Controls whether the questionnaire page shows the answers expander.",
+            )
+            debug_label = form.text_input(
+                "Debug expander label",
+                value=debug_label_value,
+                help="Used as the label for the debug answers expander.",
+            )
+            submitted = form.form_submit_button("Save page content")
 
         if submitted:
             updated_page_settings = {
@@ -3316,111 +3356,118 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
         None,
     )
 
-    with st.form(form_key):
-        st.subheader(f"Edit question: {question.get('label', original_key)}")
+    display_name = (question.get("label", "") or original_key or "Question").strip()
+    card_title = f"Edit question: {display_name}"
 
-        key_input = st.text_input(
-            "Key",
-            value=original_key,
-            help="Unique identifier used in the schema. Letters, numbers, and underscores only.",
-        )
-
-        col_label, col_type = st.columns([3, 2])
-        with col_label:
-            label = st.text_input(
-                "Question label",
-                value=question.get("label", ""),
-                help="Shown to respondents on the questionnaire page.",
-            )
-        with col_type:
-            current_type = question.get("type", "text")
-            try:
-                default_type_index = QUESTION_TYPES.index(current_type)
-            except ValueError:
-                default_type_index = QUESTION_TYPES.index("text")
-            question_type = st.selectbox(
-                "Answer type",
-                options=QUESTION_TYPES,
-                index=default_type_index,
-                help="Determines how the answer is captured.",
-                format_func=lambda value: QUESTION_TYPE_LABELS.get(value, value),
+    with section_card(
+        card_title,
+        "Update the prompt, answer type, defaults, and conditional visibility.",
+    ) as card:
+        form = card.form(form_key)
+        with form:
+            key_input = form.text_input(
+                "Key",
+                value=original_key,
+                help="Unique identifier used in the schema. Letters, numbers, and underscores only.",
             )
 
-        related_record_source = render_related_record_settings(
-            form_key,
-            question_type,
-            existing_related_source if isinstance(existing_related_source, str) else None,
-        )
-
-        with st.expander(
-            "Guidance and placeholders",
-            expanded=bool(question.get("help") or question.get("placeholder")),
-        ):
-            help_text = st.text_area(
-                "Help text",
-                value=question.get("help", ""),
-                help="Optional supporting text displayed beneath the label.",
-            )
-            placeholder = st.text_input(
-                "Placeholder",
-                value=question.get("placeholder", ""),
-                help="Appears inside the input when no answer has been provided.",
-            )
-
-        options = render_options_editor(
-            f"{prefix}_{original_key}" if prefix else original_key,
-            question_type,
-            question.get("options"),
-        )
-
-        with st.container():
-            st.markdown("**Response settings**")
-            required_disabled = question_type == "statement"
-            initial_required = (
-                bool(question.get("required")) if not required_disabled else False
-            )
-            col_required, col_default = st.columns([1, 3])
-            with col_required:
-                required_checkbox = st.checkbox(
-                    "Response required",
-                    value=initial_required,
-                    key=f"{form_key}_required",
-                    help="Respondents must answer before submitting the questionnaire.",
-                    disabled=required_disabled,
+            col_label, col_type = form.columns([3, 2])
+            with col_label:
+                label = st.text_input(
+                    "Question label",
+                    value=question.get("label", ""),
+                    help="Shown to respondents on the questionnaire page.",
                 )
-                if required_disabled:
-                    st.caption("Statements cannot be required.")
-            with col_default:
-                default_value = render_default_answer_input(
-                    f"{form_key}_{question_type}",
-                    question_type,
-                    options,
-                    question.get("default"),
+            with col_type:
+                current_type = question.get("type", "text")
+                try:
+                    default_type_index = QUESTION_TYPES.index(current_type)
+                except ValueError:
+                    default_type_index = QUESTION_TYPES.index("text")
+                question_type = st.selectbox(
+                    "Answer type",
+                    options=QUESTION_TYPES,
+                    index=default_type_index,
+                    help="Determines how the answer is captured.",
+                    format_func=lambda value: QUESTION_TYPE_LABELS.get(value, value),
                 )
 
-        required_flag = bool(required_checkbox) if not required_disabled else False
-        prepared_default = _prepare_default_for_storage(question_type, default_value)
-
-        with st.expander(
-            "Visibility conditions",
-            expanded=bool(question.get("show_if")),
-        ):
-            st.caption(
-                "Use the rule builder below for a guided experience or paste JSON here for advanced control."
-            )
-            show_if_raw = st.text_area(
-                "Show if (JSON)",
-                key=show_if_json_key,
-                value=st.session_state.get(show_if_json_key, initial_show_if),
-                placeholder='{"all": [{"field": "previous_question", "operator": "equals", "value": "Yes"}]}',
-                help="JSON logic describing when the question should appear.",
+            related_record_source = render_related_record_settings(
+                form_key,
+                question_type,
+                existing_related_source if isinstance(existing_related_source, str) else None,
             )
 
-        col_save, col_delete = st.columns([3, 1])
-        with col_save:
-            submitted = st.form_submit_button("Save changes")
-        with col_delete:
-            delete_requested = st.form_submit_button("Delete question", type="secondary")
+            with form.expander(
+                "Guidance and placeholders",
+                expanded=bool(question.get("help") or question.get("placeholder")),
+            ):
+                help_text = st.text_area(
+                    "Help text",
+                    value=question.get("help", ""),
+                    help="Optional supporting text displayed beneath the label.",
+                )
+                placeholder = st.text_input(
+                    "Placeholder",
+                    value=question.get("placeholder", ""),
+                    help="Appears inside the input when no answer has been provided.",
+                )
+
+            options = render_options_editor(
+                f"{prefix}_{original_key}" if prefix else original_key,
+                question_type,
+                question.get("options"),
+            )
+
+            settings_container = form.container()
+            with settings_container:
+                st.markdown("**Response settings**")
+                required_disabled = question_type == "statement"
+                initial_required = (
+                    bool(question.get("required")) if not required_disabled else False
+                )
+                col_required, col_default = st.columns([1, 3])
+                with col_required:
+                    required_checkbox = st.checkbox(
+                        "Response required",
+                        value=initial_required,
+                        key=f"{form_key}_required",
+                        help="Respondents must answer before submitting the questionnaire.",
+                        disabled=required_disabled,
+                    )
+                    if required_disabled:
+                        st.caption("Statements cannot be required.")
+                with col_default:
+                    default_value = render_default_answer_input(
+                        f"{form_key}_{question_type}",
+                        question_type,
+                        options,
+                        question.get("default"),
+                    )
+
+            required_flag = bool(required_checkbox) if not required_disabled else False
+            prepared_default = _prepare_default_for_storage(question_type, default_value)
+
+            with form.expander(
+                "Visibility conditions",
+                expanded=bool(question.get("show_if")),
+            ):
+                st.caption(
+                    "Use the rule builder below for a guided experience or paste JSON here for advanced control."
+                )
+                show_if_raw = st.text_area(
+                    "Show if (JSON)",
+                    key=show_if_json_key,
+                    value=st.session_state.get(show_if_json_key, initial_show_if),
+                    placeholder='{"all": [{"field": "previous_question", "operator": "equals", "value": "Yes"}]}',
+                    help="JSON logic describing when the question should appear.",
+                )
+
+            col_save, col_delete = form.columns([3, 1])
+            with col_save:
+                submitted = form.form_submit_button("Save changes")
+            with col_delete:
+                delete_requested = form.form_submit_button("Delete question", type="secondary")
 
         if submitted:
             new_key = key_input.strip()
@@ -3587,91 +3634,94 @@ def render_question_editor(question: Dict[str, Any], schema: Dict[str, Any]) -> 
             st.session_state[SCHEMA_STATE_KEY] = schema
             st.warning("Question removed. Use Publish or Save as Draft to persist changes.")
 
-    with st.expander("Rule builder", expanded=bool(question.get("show_if"))):
+    with card.expander("Rule builder", expanded=bool(question.get("show_if"))):
         render_show_if_builder(question, schema, show_if_json_key)
 
 
 def render_add_question(schema: Dict[str, Any]) -> None:
     """Render the form to create a new question."""
 
-    st.subheader("Add new question")
-    st.caption("Configure the essentials, then fine-tune defaults and behaviour.")
     prefix = _state_prefix(schema)
     form_key = f"add_question_{prefix}" if prefix else "add_question"
-    with st.form(form_key):
-        st.markdown("**Question details**")
-        col_key, col_label = st.columns([1, 2])
-        with col_key:
-            key = st.text_input(
-                "Key",
-                key=f"{form_key}_key",
-                help="Unique identifier used in the schema. Letters, numbers, and underscores only.",
-            )
-        with col_label:
-            label = st.text_input(
-                "Question label",
-                key=f"{form_key}_label",
-                help="Displayed to respondents. Leave blank to reuse the key.",
-            )
-        question_type = st.selectbox(
-            "Answer type",
-            options=QUESTION_TYPES,
-            key=f"{form_key}_type",
-            format_func=lambda value: QUESTION_TYPE_LABELS.get(value, value),
-            help="Determines how the answer is captured.",
-        )
-
-        related_record_source = render_related_record_settings(
-            form_key, question_type, None
-        )
-
-        with st.expander("Guidance and placeholders"):
-            help_text = st.text_area(
-                "Help text",
-                help="Optional supporting text displayed beneath the label.",
-            )
-            placeholder = st.text_input(
-                "Placeholder",
-                help="Appears inside the input when no answer has been provided.",
+    with section_card(
+        "Add new question",
+        "Configure the essentials, then fine-tune defaults and behaviour.",
+    ) as card:
+        form = card.form(form_key)
+        with form:
+            form.markdown("**Question details**")
+            col_key, col_label = st.columns([1, 2])
+            with col_key:
+                key = st.text_input(
+                    "Key",
+                    key=f"{form_key}_key",
+                    help="Unique identifier used in the schema. Letters, numbers, and underscores only.",
+                )
+            with col_label:
+                label = st.text_input(
+                    "Question label",
+                    key=f"{form_key}_label",
+                    help="Displayed to respondents. Leave blank to reuse the key.",
+                )
+            question_type = st.selectbox(
+                "Answer type",
+                options=QUESTION_TYPES,
+                key=f"{form_key}_type",
+                format_func=lambda value: QUESTION_TYPE_LABELS.get(value, value),
+                help="Determines how the answer is captured.",
             )
 
-        options = render_options_editor(
-            f"{prefix}_new" if prefix else "new", question_type, None
-        )
-
-        st.markdown("**Response settings**")
-        required_disabled = question_type == "statement"
-        col_required, col_default = st.columns([1, 3])
-        with col_required:
-            required_checkbox = st.checkbox(
-                "Response required",
-                key=f"{form_key}_required",
-                help="Respondents must answer before submitting the questionnaire.",
-                disabled=required_disabled,
-            )
-            if required_disabled:
-                st.caption("Statements cannot be required.")
-        with col_default:
-            default_value = render_default_answer_input(
-                f"{form_key}_{question_type}_new",
-                question_type,
-                options,
-                None,
+            related_record_source = render_related_record_settings(
+                form_key, question_type, None
             )
 
-        required_flag = bool(required_checkbox) if not required_disabled else False
-        prepared_default = _prepare_default_for_storage(question_type, default_value)
+            with form.expander("Guidance and placeholders"):
+                help_text = st.text_area(
+                    "Help text",
+                    help="Optional supporting text displayed beneath the label.",
+                )
+                placeholder = st.text_input(
+                    "Placeholder",
+                    help="Appears inside the input when no answer has been provided.",
+                )
 
-        with st.expander("Visibility conditions"):
-            st.caption(
-                "Use the rule builder below for a guided experience or paste JSON here for advanced control."
-            )
-            show_if_raw = st.text_area(
-                "Show if (JSON)",
-                placeholder='{"any": [{"field": "q1", "operator": "equals", "value": "Yes"}]}',
+            options = render_options_editor(
+                f"{prefix}_new" if prefix else "new", question_type, None
             )
 
-        submitted = st.form_submit_button("Add question", type="primary")
+            form.markdown("**Response settings**")
+            required_disabled = question_type == "statement"
+            col_required, col_default = st.columns([1, 3])
+            with col_required:
+                required_checkbox = st.checkbox(
+                    "Response required",
+                    key=f"{form_key}_required",
+                    help="Respondents must answer before submitting the questionnaire.",
+                    disabled=required_disabled,
+                )
+                if required_disabled:
+                    st.caption("Statements cannot be required.")
+            with col_default:
+                default_value = render_default_answer_input(
+                    f"{form_key}_{question_type}_new",
+                    question_type,
+                    options,
+                    None,
+                )
+
+            required_flag = bool(required_checkbox) if not required_disabled else False
+            prepared_default = _prepare_default_for_storage(question_type, default_value)
+
+            with form.expander("Visibility conditions"):
+                st.caption(
+                    "Use the rule builder below for a guided experience or paste JSON here for advanced control."
+                )
+                show_if_raw = st.text_area(
+                    "Show if (JSON)",
+                    placeholder='{"any": [{"field": "q1", "operator": "equals", "value": "Yes"}]}',
+                )
+
+            submitted = form.form_submit_button("Add question", type="primary")
 
         if submitted:
             if not key:
@@ -3843,14 +3893,17 @@ def main() -> None:
         st.json(persistable_preview)
 
     st.divider()
-    st.subheader("Save changes")
-    col_draft, col_publish = st.columns(2)
-    with col_draft:
-        if st.button("Save as Draft"):
-            handle_save_draft(schema)
-    with col_publish:
-        if st.button("Publish", type="primary"):
-            handle_publish(schema)
+    with section_card(
+        "Save changes",
+        "Store your progress locally or publish the schema for others to use.",
+    ) as card:
+        col_draft, col_publish = card.columns(2)
+        with col_draft:
+            if st.button("Save as Draft"):
+                handle_save_draft(schema)
+        with col_publish:
+            if st.button("Publish", type="primary"):
+                handle_publish(schema)
 
 
 if __name__ == "__main__":

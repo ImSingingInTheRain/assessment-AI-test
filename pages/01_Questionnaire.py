@@ -726,11 +726,12 @@ def render_question(
     else:
         question_intro = f"Question {index + 1} of {total}"
 
-    st.markdown(
+    card = st.container()
+    card.markdown(
         "<div class='question-card'>",
         unsafe_allow_html=True,
     )
-    st.markdown(
+    card.markdown(
         f"""
         <div class="question-header">
             <span class="question-step">{question_intro}</span>
@@ -741,11 +742,14 @@ def render_question(
         unsafe_allow_html=True,
     )
 
+    def _close_card() -> None:
+        card.markdown("</div>", unsafe_allow_html=True)
+
     if question_type == "single":
         options: List[str] = [option for option in question.get("options", []) if isinstance(option, str)]
         if not options:
-            st.warning(f"Question '{question_key}' has no options configured.")
-            st.markdown("</div>", unsafe_allow_html=True)
+            card.warning(f"Question '{question_key}' has no options configured.")
+            _close_card()
             return
         choices = [UNSELECTED_LABEL, *options]
         if widget_key in st.session_state and st.session_state[widget_key] not in choices:
@@ -756,7 +760,7 @@ def render_question(
                 default_value if isinstance(default_value, str) and default_value in options else UNSELECTED_LABEL
             )
         index = choices.index(default_choice)
-        selection = st.radio(
+        selection = card.radio(
             label,
             choices,
             index=index,
@@ -770,8 +774,8 @@ def render_question(
     elif question_type == "multiselect":
         options = [option for option in question.get("options", []) if isinstance(option, str)]
         if not options:
-            st.warning(f"Question '{question_key}' has no options configured.")
-            st.markdown("</div>", unsafe_allow_html=True)
+            card.warning(f"Question '{question_key}' has no options configured.")
+            _close_card()
             return
         if isinstance(default_value, list):
             default_selection = [value for value in default_value if value in options]
@@ -779,7 +783,7 @@ def render_question(
             default_selection = [value for value in question.get("default", []) if value in options]
         else:
             default_selection = []
-        selections = st.multiselect(
+        selections = card.multiselect(
             label,
             options=options,
             default=default_selection,
@@ -789,7 +793,7 @@ def render_question(
         answers[question_key] = selections
     elif question_type == "bool":
         default_bool = bool(default_value) if default_value is not None else False
-        selection = st.checkbox(
+        selection = card.checkbox(
             label,
             value=default_bool,
             key=widget_key,
@@ -798,7 +802,7 @@ def render_question(
         answers[question_key] = selection
     elif question_type in {"text", RECORD_NAME_TYPE}:
         default_text = "" if default_value is None else str(default_value)
-        text_value = st.text_input(
+        text_value = card.text_input(
             label,
             value=default_text,
             key=widget_key,
@@ -818,10 +822,10 @@ def render_question(
             answers.pop(question_key, None)
             if widget_key in st.session_state:
                 st.session_state.pop(widget_key)
-            st.warning(
+            card.warning(
                 "Related record questions require a valid source. Contact the questionnaire maintainer."
             )
-            st.markdown("</div>", unsafe_allow_html=True)
+            _close_card()
             return
 
         options = load_related_record_options(source_key)
@@ -829,10 +833,10 @@ def render_question(
             answers.pop(question_key, None)
             if widget_key in st.session_state:
                 st.session_state.pop(widget_key)
-            st.info(
+            card.info(
                 f"No records available for {related_record_source_label(source_key)} yet."
             )
-            st.markdown("</div>", unsafe_allow_html=True)
+            _close_card()
             return
 
         option_values = [value for value, _ in options]
@@ -849,7 +853,7 @@ def render_question(
         else:
             default_option = UNSELECTED_LABEL
         index = choices.index(default_option)
-        selection = st.selectbox(
+        selection = card.selectbox(
             label,
             options=choices,
             index=index,
@@ -863,16 +867,16 @@ def render_question(
             answers.pop(question_key, None)
         else:
             answers[question_key] = selection
-            st.caption(f"Selected record ID: `{selection}`")
+            card.caption(f"Selected record ID: `{selection}`")
     elif question_type == "statement":
         answers.pop(question_key, None)
         if widget_key in st.session_state:
             st.session_state.pop(widget_key)
-        st.caption("No response required.")
+        card.caption("No response required.")
     else:
-        st.warning(f"Unsupported question type: {question_type}")
+        card.warning(f"Unsupported question type: {question_type}")
 
-    st.markdown("</div>", unsafe_allow_html=True)
+    _close_card()
 
 
 def main() -> None:
