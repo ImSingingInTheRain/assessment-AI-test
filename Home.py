@@ -222,14 +222,28 @@ def main() -> None:
 
     systems = _load_systems(SYSTEM_SUBMISSIONS_DIR)
     assessment_links = _load_assessment_links()
+    risk_level_counts = {
+        "limited": 0,
+        "high": 0,
+        "unacceptable": 0,
+        "unknown": 0,
+    }
+    total_risk_assignments = 0
     for record in systems:
         submission_id = str(record.get("Submission ID", ""))
         linked = assessment_links.get(submission_id, [])
         record["Has assessment"] = "Yes" if linked else "No"
         record["Latest assessment"] = linked[0]["submission_id"] if linked else "—"
         aggregated_risks = aggregate_risks_for_system(linked, submission_id)
+        record["_aggregated_risks"] = aggregated_risks
         risk_summary = risks_to_markdown(aggregated_risks)
         record["Assigned risks"] = risk_summary or "—"
+        if aggregated_risks:
+            total_risk_assignments += len(aggregated_risks)
+            for risk in aggregated_risks:
+                level = str(risk.get("level", "")).lower()
+                key = level if level in risk_level_counts else "unknown"
+                risk_level_counts[key] += 1
 
     total_systems = len(systems)
     unique_questionnaires = {
@@ -243,6 +257,23 @@ def main() -> None:
     metric_col1.metric("Registered systems", total_systems or "0")
     metric_col2.metric("Questionnaires", len(unique_questionnaires) or "—")
     metric_col3.metric("Most recent registration", most_recent or "—")
+
+    st.markdown("#### Risk overview")
+    if total_risk_assignments:
+        risk_metric_cols = st.columns(4)
+        risk_metric_cols[0].metric("Total assigned risks", total_risk_assignments)
+        risk_metric_cols[1].metric("Unacceptable", risk_level_counts["unacceptable"] or "0")
+        risk_metric_cols[2].metric("High", risk_level_counts["high"] or "0")
+        risk_metric_cols[3].metric("Limited", risk_level_counts["limited"] or "0")
+        if risk_level_counts["unknown"]:
+            st.caption(
+                f"Risks with unknown levels: {risk_level_counts['unknown']}"
+            )
+    else:
+        st.caption(
+            "Assessments have not assigned any risks yet. Launch an assessment to "
+            "start tracking risk levels."
+        )
 
     st.markdown("---")
 
