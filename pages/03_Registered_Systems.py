@@ -11,7 +11,17 @@ from urllib.parse import urlencode
 import pandas as pd
 import streamlit as st
 
-from Home import RELATED_SYSTEM_FIELDS
+try:  # pragma: no cover - compatibility shim for older ``Home`` modules
+    import Home as _home_module
+except ImportError:  # pragma: no cover - legacy fallback
+    _home_module = None
+
+if _home_module is not None:  # pragma: no branch - helper initialisation
+    RELATED_SYSTEM_FIELDS = getattr(
+        _home_module, "RELATED_SYSTEM_FIELDS", ("related-system",)
+    )
+else:  # pragma: no cover - default for environments without ``Home`` helper
+    RELATED_SYSTEM_FIELDS = ("related-system",)
 from lib import questionnaire_utils
 from lib.risk_display import (
     aggregate_risks_for_system,

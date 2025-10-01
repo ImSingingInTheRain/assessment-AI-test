@@ -13,7 +13,25 @@ import uuid
 import requests
 import streamlit as st
 
-from Home import RELATED_SYSTEM_FIELD, RELATED_SYSTEM_FIELDS, load_schema
+try:  # pragma: no cover - compatibility shim for older ``Home`` modules
+    import Home as _home_module
+except ImportError:  # pragma: no cover - legacy fallback
+    _home_module = None
+
+if _home_module is not None:  # pragma: no branch - small helper initialisation
+    load_schema = _home_module.load_schema
+    RELATED_SYSTEM_FIELDS = getattr(
+        _home_module, "RELATED_SYSTEM_FIELDS", ("related-system",)
+    )
+    RELATED_SYSTEM_FIELD = getattr(
+        _home_module, "RELATED_SYSTEM_FIELD", RELATED_SYSTEM_FIELDS[0]
+    )
+else:  # pragma: no cover - best effort defaults when ``Home`` import fails
+    def load_schema() -> Dict[str, Any]:
+        return {}
+
+    RELATED_SYSTEM_FIELDS = ("related-system",)
+    RELATED_SYSTEM_FIELD = RELATED_SYSTEM_FIELDS[0]
 from lib.form_store import (
     available_form_keys,
     combine_forms,
