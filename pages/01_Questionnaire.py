@@ -726,30 +726,27 @@ def render_question(
     else:
         question_intro = f"Question {index + 1} of {total}"
 
-    card = st.container()
-    card.markdown(
-        "<div class='question-card'>",
-        unsafe_allow_html=True,
-    )
-    card.markdown(
+    question_block = st.container()
+    question_block.markdown(
         f"""
-        <div class="question-header">
-            <span class="question-step">{question_intro}</span>
-            <h3>{label}{' *' if required else ''}</h3>
-        </div>
-        {f'<p class="question-help">{help_text}</p>' if help_text else ''}
+        <section class="question-block">
+            <div class="question-block__header">
+                <span class="question-block__step">{question_intro}</span>
+                <h3 class="question-block__title">{label}{'<sup>*</sup>' if required else ''}</h3>
+            </div>
+            {f'<p class="question-block__help">{help_text}</p>' if help_text else ''}
         """,
         unsafe_allow_html=True,
     )
 
-    def _close_card() -> None:
-        card.markdown("</div>", unsafe_allow_html=True)
+    def _close_block() -> None:
+        question_block.markdown("</section>", unsafe_allow_html=True)
 
     if question_type == "single":
         options: List[str] = [option for option in question.get("options", []) if isinstance(option, str)]
         if not options:
-            card.warning(f"Question '{question_key}' has no options configured.")
-            _close_card()
+            question_block.warning(f"Question '{question_key}' has no options configured.")
+            _close_block()
             return
         choices = [UNSELECTED_LABEL, *options]
         if widget_key in st.session_state and st.session_state[widget_key] not in choices:
@@ -760,7 +757,7 @@ def render_question(
                 default_value if isinstance(default_value, str) and default_value in options else UNSELECTED_LABEL
             )
         index = choices.index(default_choice)
-        selection = card.radio(
+        selection = question_block.radio(
             label,
             choices,
             index=index,
@@ -774,8 +771,8 @@ def render_question(
     elif question_type == "multiselect":
         options = [option for option in question.get("options", []) if isinstance(option, str)]
         if not options:
-            card.warning(f"Question '{question_key}' has no options configured.")
-            _close_card()
+            question_block.warning(f"Question '{question_key}' has no options configured.")
+            _close_block()
             return
         if isinstance(default_value, list):
             default_selection = [value for value in default_value if value in options]
@@ -783,7 +780,7 @@ def render_question(
             default_selection = [value for value in question.get("default", []) if value in options]
         else:
             default_selection = []
-        selections = card.multiselect(
+        selections = question_block.multiselect(
             label,
             options=options,
             default=default_selection,
@@ -793,7 +790,7 @@ def render_question(
         answers[question_key] = selections
     elif question_type == "bool":
         default_bool = bool(default_value) if default_value is not None else False
-        selection = card.checkbox(
+        selection = question_block.checkbox(
             label,
             value=default_bool,
             key=widget_key,
@@ -802,7 +799,7 @@ def render_question(
         answers[question_key] = selection
     elif question_type in {"text", RECORD_NAME_TYPE}:
         default_text = "" if default_value is None else str(default_value)
-        text_value = card.text_input(
+        text_value = question_block.text_input(
             label,
             value=default_text,
             key=widget_key,
@@ -822,10 +819,10 @@ def render_question(
             answers.pop(question_key, None)
             if widget_key in st.session_state:
                 st.session_state.pop(widget_key)
-            card.warning(
+            question_block.warning(
                 "Related record questions require a valid source. Contact the questionnaire maintainer."
             )
-            _close_card()
+            _close_block()
             return
 
         options = load_related_record_options(source_key)
@@ -833,10 +830,10 @@ def render_question(
             answers.pop(question_key, None)
             if widget_key in st.session_state:
                 st.session_state.pop(widget_key)
-            card.info(
+            question_block.info(
                 f"No records available for {related_record_source_label(source_key)} yet."
             )
-            _close_card()
+            _close_block()
             return
 
         option_values = [value for value, _ in options]
@@ -853,7 +850,7 @@ def render_question(
         else:
             default_option = UNSELECTED_LABEL
         index = choices.index(default_option)
-        selection = card.selectbox(
+        selection = question_block.selectbox(
             label,
             options=choices,
             index=index,
@@ -867,16 +864,16 @@ def render_question(
             answers.pop(question_key, None)
         else:
             answers[question_key] = selection
-            card.caption(f"Selected record ID: `{selection}`")
+            question_block.caption(f"Selected record ID: `{selection}`")
     elif question_type == "statement":
         answers.pop(question_key, None)
         if widget_key in st.session_state:
             st.session_state.pop(widget_key)
-        card.caption("No response required.")
+        question_block.caption("No response required.")
     else:
-        card.warning(f"Unsupported question type: {question_type}")
+        question_block.warning(f"Unsupported question type: {question_type}")
 
-    _close_card()
+    _close_block()
 
 
 def main() -> None:
