@@ -13,6 +13,11 @@ import streamlit as st
 from lib.form_store import load_combined_schema
 import lib.questionnaire_utils as questionnaire_utils
 from lib.questionnaire_utils import RUNNER_SELECTED_STATE_KEY, normalize_questionnaires
+from lib.risk_display import (
+    aggregate_risks_for_system,
+    normalise_risk_entries,
+    risks_to_markdown,
+)
 from lib.ui_theme import apply_app_theme, page_header
 
 # ``pages/01_Questionnaire.py`` imports ``load_schema`` from this module. Keep the
@@ -135,16 +140,22 @@ def _load_assessment_links() -> Dict[str, List[Dict[str, Any]]]:
 
         answers = payload.get("answers", {})
         if not isinstance(answers, dict):
-            continue
-        system_id = str(answers.get(RELATED_SYSTEM_FIELD, "")).strip()
+            answers = {}
+        system_id = str(
+            payload.get("related_system_id")
+            or answers.get(RELATED_SYSTEM_FIELD, "")
+        ).strip()
         if not system_id:
             continue
 
         timestamp, sort_key = _parse_timestamp(payload.get("submitted_at"))
+        risk_entries = normalise_risk_entries(payload.get("risks"))
         record = {
             "submission_id": payload.get("id", submission_file.stem),
             "timestamp": timestamp,
             "_sort_key": sort_key,
+            "system_id": system_id,
+            "risks": risk_entries,
         }
         entries = links.setdefault(system_id, [])
         entries.append(record)
@@ -216,6 +227,9 @@ def main() -> None:
         linked = assessment_links.get(submission_id, [])
         record["Has assessment"] = "Yes" if linked else "No"
         record["Latest assessment"] = linked[0]["submission_id"] if linked else "—"
+        aggregated_risks = aggregate_risks_for_system(linked, submission_id)
+        risk_summary = risks_to_markdown(aggregated_risks)
+        record["Assigned risks"] = risk_summary or "—"
 
     total_systems = len(systems)
     unique_questionnaires = {
@@ -257,6 +271,11 @@ def main() -> None:
 
     with st.container():
         st.markdown("<div class='app-card app-card--table'>", unsafe_allow_html=True)
+        column_settings = {
+            column: st.column_config.Column(column, disabled=True)
+            for column in columns
+        }
+
         edited_df = st.data_editor(
             table_df,
             hide_index=True,
@@ -269,10 +288,7 @@ def main() -> None:
                     "Select",
                     help="Choose a system before launching an assessment.",
                 ),
-                **{
-                    column: st.column_config.Column(column, disabled=True)
-                    for column in columns
-                },
+                **column_settings,
             },
         )
         st.markdown("</div>", unsafe_allow_html=True)

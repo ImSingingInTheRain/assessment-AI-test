@@ -193,6 +193,55 @@ html, body {
     overflow-x: auto;
 }
 
+.app-risk-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.35rem;
+}
+
+.app-risk-badge {
+    display: inline-flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.35rem 0.9rem;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    letter-spacing: 0.01em;
+    color: white;
+    background: var(--app-muted);
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.12);
+}
+
+.app-risk-badge__level {
+    text-transform: uppercase;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    opacity: 0.9;
+}
+
+.app-risk-badge__name {
+    font-size: 0.9rem;
+}
+
+.app-risk-badge--limited {
+    background: var(--app-success);
+}
+
+.app-risk-badge--high {
+    background: var(--app-warning);
+}
+
+.app-risk-badge--unacceptable {
+    background: var(--app-error);
+}
+
+.app-risk-badge--unknown {
+    background: var(--app-muted);
+}
+
 .stButton>button,
 button[kind="primary"],
 button[data-baseweb="button"] {

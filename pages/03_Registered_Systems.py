@@ -12,6 +12,12 @@ import pandas as pd
 import streamlit as st
 
 from lib import questionnaire_utils
+from lib.risk_display import (
+    aggregate_risks_for_system,
+    normalise_risk_entries,
+    risks_to_badges_html,
+    risks_to_markdown,
+)
 from lib.ui_theme import apply_app_theme, page_header
 from lib.submission_storage import delete_submission_files
 
@@ -276,8 +282,11 @@ def _load_assessment_links() -> Dict[str, List[Dict[str, Any]]]:
 
         answers = payload.get("answers", {})
         if not isinstance(answers, dict):
-            continue
-        system_id = str(answers.get(RELATED_SYSTEM_FIELD, "")).strip()
+            answers = {}
+        system_id = str(
+            payload.get("related_system_id")
+            or answers.get(RELATED_SYSTEM_FIELD, "")
+        ).strip()
         if not system_id:
             continue
 
@@ -288,6 +297,8 @@ def _load_assessment_links() -> Dict[str, List[Dict[str, Any]]]:
             "_sort_key": sort_key,
             "_path": submission_file,
             "payload": payload,
+            "system_id": system_id,
+            "risks": normalise_risk_entries(payload.get("risks")),
         }
         entries = links.setdefault(system_id, [])
         entries.append(record)
@@ -328,6 +339,10 @@ else:
         record["_linked_assessments"] = linked
         record["Has assessment"] = "Yes" if linked else "No"
         record["Latest assessment"] = linked[0]["submission_id"] if linked else "—"
+        aggregated_risks = aggregate_risks_for_system(linked, submission_id)
+        record["_aggregated_risks"] = aggregated_risks
+        risk_summary = risks_to_markdown(aggregated_risks)
+        record["Assigned risks"] = risk_summary or "—"
 
     records_by_id = {str(record.get("Submission ID")): record for record in submissions}
 
@@ -355,6 +370,11 @@ else:
 
     with st.container():
         st.markdown("<div class='app-card app-card--table'>", unsafe_allow_html=True)
+        column_settings = {
+            column: st.column_config.Column(column, disabled=True)
+            for column in columns
+        }
+
         edited_df = st.data_editor(
             table_df,
             hide_index=True,
@@ -367,10 +387,7 @@ else:
                     "Select",
                     help="Choose a system to manage.",
                 ),
-                **{
-                    column: st.column_config.Column(column, disabled=True)
-                    for column in columns
-                },
+                **column_settings,
             },
         )
         st.markdown("</div>", unsafe_allow_html=True)
@@ -407,6 +424,19 @@ else:
                 f"**Questionnaire:** {selected.get('Questionnaire') or '—'}  ",
                 f"**Submitted at:** {selected.get('Submitted at') or '—'}",
             )
+
+            linked_assessments: List[Dict[str, Any]] = selected.get("_linked_assessments", [])
+            aggregated_risks = selected.get("_aggregated_risks", [])
+            if aggregated_risks:
+                st.markdown("**Assigned risks**")
+                st.markdown(
+                    risks_to_badges_html(aggregated_risks),
+                    unsafe_allow_html=True,
+                )
+            elif linked_assessments:
+                st.caption("Assessments referencing this system have not triggered any risks yet.")
+            else:
+                st.caption("No risks assigned to this system yet.")
 
             payload = selected.get("_raw_payload", {})
             if not isinstance(payload, dict):
@@ -549,7 +579,6 @@ else:
             with st.expander("Raw payload", expanded=False):
                 st.json(payload)
 
-            linked_assessments: List[Dict[str, Any]] = selected.get("_linked_assessments", [])
             if linked_assessments:
                 st.info(
                     f"This system is referenced by {len(linked_assessments)} assessment submission"
@@ -576,6 +605,13 @@ else:
                         payload = assessment.get("payload")
                         if isinstance(payload, dict):
                             st.json(payload)
+
+                        risk_html = risks_to_badges_html(assessment.get("risks", []))
+                        if risk_html:
+                            st.markdown("**Risks identified**")
+                            st.markdown(risk_html, unsafe_allow_html=True)
+                        else:
+                            st.caption("No risks were triggered in this assessment.")
             else:
                 st.info("No assessment submissions currently reference this system.")
     else:
