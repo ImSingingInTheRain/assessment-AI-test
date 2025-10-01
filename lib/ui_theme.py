@@ -297,40 +297,113 @@ button[data-baseweb="button"]:hover {
 }
 
 .question-card {
-    padding: 1.5rem 1.75rem 1.75rem 1.75rem;
+    padding: 1.75rem;
     border-radius: 1.5rem;
     background: var(--app-surface-strong);
     border: 1px solid rgba(81, 69, 205, 0.12);
-    box-shadow: 0 16px 36px rgba(15, 23, 42, 0.07);
-    margin-bottom: 1.25rem;
+    box-shadow: 0 20px 38px rgba(15, 23, 42, 0.08);
+    margin-bottom: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
 }
 
 .question-header {
     display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    margin-bottom: 1rem;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
 }
 
 .question-header h3 {
     margin: 0;
-    font-size: 1.15rem;
+    font-size: 1.2rem;
     font-weight: 600;
     color: var(--app-text);
+    line-height: 1.4;
 }
 
 .question-step {
-    font-size: 0.82rem;
+    font-size: 0.8rem;
     font-weight: 700;
     color: var(--app-accent);
     text-transform: uppercase;
     letter-spacing: 0.08em;
+    background: rgba(81, 69, 205, 0.12);
+    padding: 0.35rem 0.75rem;
+    border-radius: 999px;
 }
 
 .question-help {
     color: var(--app-muted);
     font-size: 0.95rem;
-    margin-bottom: 0.75rem;
+    margin: 0;
+}
+
+.question-card .stMarkdown p:last-child {
+    margin-bottom: 0;
+}
+
+.question-card [data-baseweb="radio"] {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.question-card [data-baseweb="radio"] label,
+.question-card [data-baseweb="checkbox"] label {
+    background: rgba(81, 69, 205, 0.08);
+    border-radius: 0.95rem;
+    border: 1px solid rgba(81, 69, 205, 0.15);
+    padding: 0.65rem 0.85rem;
+    transition: all 0.2s ease;
+}
+
+.question-card [data-baseweb="radio"] label:hover,
+.question-card [data-baseweb="checkbox"] label:hover {
+    border-color: rgba(81, 69, 205, 0.45);
+    background: rgba(81, 69, 205, 0.14);
+}
+
+.question-card [data-testid="stCheckbox"] > label {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+}
+
+.question-card [data-testid="stSelectbox"],
+.question-card [data-testid="stMultiSelect"] {
+    background: rgba(81, 69, 205, 0.05);
+    border-radius: 1rem;
+    padding: 0.5rem 0.65rem;
+    border: 1px solid rgba(81, 69, 205, 0.18);
+}
+
+.question-card [data-baseweb="select"] {
+    background: transparent;
+}
+
+.question-card input,
+.question-card textarea {
+    border-radius: 0.85rem !important;
+    border: 1px solid rgba(81, 69, 205, 0.25) !important;
+    background: rgba(255, 255, 255, 0.92) !important;
+    padding: 0.65rem 0.85rem !important;
+}
+
+.question-card input:focus,
+.question-card textarea:focus {
+    border-color: rgba(81, 69, 205, 0.55) !important;
+    box-shadow: 0 0 0 0.25rem rgba(81, 69, 205, 0.1);
+}
+
+.question-card .stCaption,
+.question-card [data-testid="stCaption"] {
+    color: var(--app-muted);
+}
+
+.question-card .stAlert {
+    margin-bottom: 0;
 }
 
 [data-testid="stExpander"] {
@@ -341,6 +414,40 @@ button[data-baseweb="button"]:hover {
 }
 
 [data-testid="stExpander"] [data-testid="stMarkdown"] p {
+    color: var(--app-muted);
+}
+
+form[data-testid="stForm"] {
+    padding: 1.5rem;
+    border-radius: 1.5rem;
+    border: 1px solid rgba(81, 69, 205, 0.12);
+    background: rgba(255, 255, 255, 0.9);
+    box-shadow: 0 18px 36px rgba(15, 23, 42, 0.08);
+    margin-bottom: 1.75rem;
+}
+
+form[data-testid="stForm"] .stMarkdown p {
+    margin-bottom: 0.5rem;
+}
+
+.app-section-card {
+    padding: 1.5rem;
+    border-radius: 1.5rem;
+    border: 1px solid rgba(81, 69, 205, 0.12);
+    background: rgba(255, 255, 255, 0.86);
+    box-shadow: 0 18px 38px rgba(15, 23, 42, 0.08);
+    margin-bottom: 1.5rem;
+}
+
+.app-section-card > h3 {
+    margin-top: 0;
+    margin-bottom: 0.85rem;
+    font-size: 1.15rem;
+}
+
+.app-section-card__description {
+    margin-top: -0.35rem;
+    margin-bottom: 1.2rem;
     color: var(--app-muted);
 }
 </style>
