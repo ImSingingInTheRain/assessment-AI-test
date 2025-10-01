@@ -26,6 +26,7 @@ RECORD_NAME_KEY = getattr(questionnaire_utils, "RECORD_NAME_KEY", "record_name")
 SUBMISSIONS_DIR = Path("system_registration/submissions")
 ASSESSMENT_SUBMISSIONS_DIR = Path("assessment/submissions")
 DEFAULT_TABLE_COLUMNS = ("Submission ID", "Submitted at", "Questionnaire")
+HIDDEN_TABLE_COLUMNS = set(DEFAULT_TABLE_COLUMNS)
 SYSTEM_ID_PARAM = "system_id"
 RELATED_SYSTEM_FIELD = "related-sytem"
 ASSESSMENT_QUERY_PARAM = "submission_id"
@@ -370,10 +371,12 @@ else:
 
     with st.container():
         st.markdown("<div class='app-card app-card--table'>", unsafe_allow_html=True)
-        column_settings = {
-            column: st.column_config.Column(column, disabled=True)
-            for column in columns
-        }
+        column_settings = {}
+        for column in columns:
+            config = st.column_config.Column(column, disabled=True)
+            if column in HIDDEN_TABLE_COLUMNS:
+                config["hidden"] = True
+            column_settings[column] = config
 
         edited_df = st.data_editor(
             table_df,
