@@ -1,0 +1,11 @@
+{
+  "id": "d8663270a78e407da39023640b118634",
+  "questionnaire_key": "system_registration",
+  "submitted_at": "2025-10-01T10:56:25.517565+00:00",
+  "answers": {
+    "name-system": "Crazy AI",
+    "description": "A crazy ai system doing a lot of stuff",
+    "system-type": "AI system"
+  },
+  "record_name": "Crazy AI"
+}
