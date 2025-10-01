@@ -1,0 +1,15 @@
+{
+  "id": "50b3acff85f84c2bb641142e97609f9f",
+  "questionnaire_key": "assessment",
+  "submitted_at": "2025-10-01T06:08:17.345333+00:00",
+  "answers": {
+    "name": "Test risk low",
+    "related-sytem": "6e25c5a873f64b53957df9eeac121415",
+    "q_area": "HR",
+    "q_handles_personal_data": "No",
+    "use-AI": "Yes",
+    "high-risk": []
+  },
+  "record_name": "Test risk low",
+  "related_system_id": "6e25c5a873f64b53957df9eeac121415"
+}
