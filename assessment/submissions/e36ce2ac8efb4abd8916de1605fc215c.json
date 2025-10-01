@@ -1,0 +1,21 @@
+{
+  "id": "e36ce2ac8efb4abd8916de1605fc215c",
+  "questionnaire_key": "assessment",
+  "submitted_at": "2025-10-01T04:45:02.972115+00:00",
+  "answers": {
+    "name": "Test risk",
+    "related-sytem": "64cec68b12af4ff5aa63bcc7cad6622f",
+    "q_area": "Research",
+    "q_handles_personal_data": "Yes",
+    "q_sensitive_categories": [
+      "Biometric"
+    ],
+    "use-AI": "Yes",
+    "high-risk": [
+      "Biometric categorization"
+    ],
+    "rd-exception": "No"
+  },
+  "record_name": "Test risk",
+  "related_system_id": "64cec68b12af4ff5aa63bcc7cad6622f"
+}
