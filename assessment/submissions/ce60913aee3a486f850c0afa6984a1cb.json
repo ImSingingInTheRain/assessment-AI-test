@@ -1,0 +1,31 @@
+{
+  "id": "ce60913aee3a486f850c0afa6984a1cb",
+  "questionnaire_key": "assessment",
+  "submitted_at": "2025-10-01T06:01:46.095151+00:00",
+  "answers": {
+    "related-sytem": "64cec68b12af4ff5aa63bcc7cad6622f",
+    "name": "Risk test new ",
+    "q_area": "IT",
+    "q_handles_personal_data": "Yes",
+    "q_sensitive_categories": [
+      "Health"
+    ],
+    "use-AI": "Yes",
+    "high-risk": [
+      "Biometric categorization",
+      "Biometric identification",
+      "Recruitment",
+      "Employee management"
+    ]
+  },
+  "record_name": "Risk test new",
+  "related_system_id": "64cec68b12af4ff5aa63bcc7cad6622f",
+  "risks": [
+    {
+      "key": "risk1",
+      "name": "High Risk AI",
+      "level": "high",
+      "system_id": "64cec68b12af4ff5aa63bcc7cad6622f"
+    }
+  ]
+}
