@@ -295,6 +295,8 @@ def _collect_triggered_risks(
             continue
 
         logic = risk.get("logic")
+        if isinstance(logic, Sequence) and not isinstance(logic, (str, bytes, dict)):
+            logic = {"all": list(logic)}
         if logic is None:
             continue
         if not isinstance(logic, dict):
