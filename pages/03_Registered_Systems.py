@@ -11,6 +11,7 @@ from urllib.parse import urlencode
 import pandas as pd
 import streamlit as st
 
+from Home import RELATED_SYSTEM_FIELDS
 from lib import questionnaire_utils
 from lib.risk_display import (
     aggregate_risks_for_system,
@@ -28,9 +29,21 @@ ASSESSMENT_SUBMISSIONS_DIR = Path("assessment/submissions")
 DEFAULT_TABLE_COLUMNS = ("Submission ID", "Submitted at", "Questionnaire")
 HIDDEN_TABLE_COLUMNS = set(DEFAULT_TABLE_COLUMNS)
 SYSTEM_ID_PARAM = "system_id"
-RELATED_SYSTEM_FIELD = "related-sytem"
 ASSESSMENT_QUERY_PARAM = "submission_id"
 MANAGED_SYSTEM_KEY = "system_managed_submission_id"
+
+
+def _extract_related_system_id(answers: Dict[str, Any]) -> str:
+    """Return the first populated related system identifier from ``answers``."""
+
+    for field in RELATED_SYSTEM_FIELDS:
+        value = answers.get(field)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
 
 
 def _parse_timestamp(value: Any) -> Tuple[str, float]:
@@ -284,10 +297,10 @@ def _load_assessment_links() -> Dict[str, List[Dict[str, Any]]]:
         answers = payload.get("answers", {})
         if not isinstance(answers, dict):
             answers = {}
-        system_id = str(
-            payload.get("related_system_id")
-            or answers.get(RELATED_SYSTEM_FIELD, "")
-        ).strip()
+        related_system = payload.get("related_system_id")
+        system_id = str(related_system).strip() if related_system is not None else ""
+        if not system_id:
+            system_id = _extract_related_system_id(answers)
         if not system_id:
             continue
 

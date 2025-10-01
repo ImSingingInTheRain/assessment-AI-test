@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 import pandas as pd
 import streamlit as st
@@ -39,7 +39,8 @@ HOME_SELECTED_SYSTEM_KEY = "home_selected_system_id"
 ANSWERS_STATE_KEY = "questionnaire_answers"
 ASSESSMENT_KEY = "assessment"
 SYSTEM_REGISTRATION_KEY = "system_registration"
-RELATED_SYSTEM_FIELD = "related-sytem"
+RELATED_SYSTEM_FIELDS: tuple[str, ...] = ("related-system", "related-sytem")
+RELATED_SYSTEM_FIELD = RELATED_SYSTEM_FIELDS[0]
 
 
 def _parse_timestamp(value: Any) -> tuple[str, float]:
@@ -125,6 +126,19 @@ def _strip_private_keys(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any
     return cleaned
 
 
+def _extract_related_system_id(answers: Mapping[str, Any]) -> str:
+    """Return the first non-empty related system identifier in ``answers``."""
+
+    for field in RELATED_SYSTEM_FIELDS:
+        value = answers.get(field)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
 def _load_assessment_links() -> Dict[str, List[Dict[str, Any]]]:
     """Return assessment submissions keyed by referenced system ID."""
 
@@ -142,10 +156,10 @@ def _load_assessment_links() -> Dict[str, List[Dict[str, Any]]]:
         answers = payload.get("answers", {})
         if not isinstance(answers, dict):
             answers = {}
-        system_id = str(
-            payload.get("related_system_id")
-            or answers.get(RELATED_SYSTEM_FIELD, "")
-        ).strip()
+        related_system = payload.get("related_system_id")
+        system_id = str(related_system).strip() if related_system is not None else ""
+        if not system_id:
+            system_id = _extract_related_system_id(answers)
         if not system_id:
             continue
 
@@ -185,7 +199,12 @@ def _launch_assessment(system_id: str) -> None:
 
     answers_state: Dict[str, Dict[str, Any]] = st.session_state.setdefault(ANSWERS_STATE_KEY, {})
     assessment_answers = answers_state.setdefault(ASSESSMENT_KEY, {})
-    assessment_answers[RELATED_SYSTEM_FIELD] = system_id
+    if system_id:
+        assessment_answers[RELATED_SYSTEM_FIELD] = system_id
+    else:
+        assessment_answers.pop(RELATED_SYSTEM_FIELD, None)
+    for legacy_field in RELATED_SYSTEM_FIELDS[1:]:
+        assessment_answers.pop(legacy_field, None)
     answers_state[ASSESSMENT_KEY] = assessment_answers
     st.session_state[ANSWERS_STATE_KEY] = answers_state
     _switch_to_questionnaire(ASSESSMENT_KEY)

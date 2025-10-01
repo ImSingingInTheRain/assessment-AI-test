@@ -142,6 +142,8 @@ def test_store_assessment_submission_assigns_risks(monkeypatch):
     payload = captured.get("payload")
     assert payload is not None
     assert payload["related_system_id"] == "sys-123"
+    assert payload["answers"].get("related-system") == "sys-123"
+    assert "related-sytem" not in payload["answers"]
     assert payload["risks"] == [
         {
             "key": "demo-risk",

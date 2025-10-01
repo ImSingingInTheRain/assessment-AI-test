@@ -13,7 +13,7 @@ import uuid
 import requests
 import streamlit as st
 
-from Home import RELATED_SYSTEM_FIELD, load_schema
+from Home import RELATED_SYSTEM_FIELD, RELATED_SYSTEM_FIELDS, load_schema
 from lib.form_store import (
     available_form_keys,
     combine_forms,
@@ -267,6 +267,19 @@ def _normalise_system_id(value: Any) -> str:
     return str(value).strip()
 
 
+def _extract_related_system_id(answers: Mapping[str, Any]) -> str:
+    """Return the first populated related system identifier in ``answers``."""
+
+    for field in RELATED_SYSTEM_FIELDS:
+        value = answers.get(field)
+        if value is None:
+            continue
+        text = _normalise_system_id(value)
+        if text:
+            return text
+    return ""
+
+
 def _collect_triggered_risks(
     answers: Dict[str, Any], *, system_id: str = ""
 ) -> List[Dict[str, Any]]:
@@ -438,13 +451,17 @@ def store_assessment_submission(
     related_system_id = ""
     triggered_risks: List[Dict[str, Any]] = []
     if isinstance(serialisable_answers, dict):
-        related_system_id = _normalise_system_id(
-            serialisable_answers.get(RELATED_SYSTEM_FIELD)
-        )
+        related_system_id = _extract_related_system_id(serialisable_answers)
         triggered_risks = _collect_triggered_risks(
             serialisable_answers, system_id=related_system_id
         )
         extracted_name = serialisable_answers.pop(RECORD_NAME_FIELD, None)
+        if related_system_id:
+            serialisable_answers[RELATED_SYSTEM_FIELD] = related_system_id
+        elif RELATED_SYSTEM_FIELD in serialisable_answers:
+            serialisable_answers.pop(RELATED_SYSTEM_FIELD, None)
+        for legacy_field in RELATED_SYSTEM_FIELDS[1:]:
+            serialisable_answers.pop(legacy_field, None)
     else:
         extracted_name = None
 
