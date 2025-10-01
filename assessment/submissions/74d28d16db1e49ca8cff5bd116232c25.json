@@ -1,0 +1,32 @@
+{
+  "id": "74d28d16db1e49ca8cff5bd116232c25",
+  "questionnaire_key": "assessment",
+  "submitted_at": "2025-10-01T10:33:07.589656+00:00",
+  "answers": {
+    "name": "new test",
+    "q2_1": [
+      "1) Influence the decisions or behaviour of a person"
+    ],
+    "q4_2": [
+      "The AI system makes or supports decisions about employees\u2019 work conditions, promotions, task assignments, or performance evaluations"
+    ],
+    "q5_1": [],
+    "org_role": "User / deployer of a third-party AI system",
+    "q2_2": "Yes",
+    "q2_3": [
+      "Using subliminal or manipulative techniques"
+    ],
+    "q3_2": "Yes",
+    "q3_4": [
+      "b) It uses biometric data to understand characteristics of individuals other than their identity",
+      "c) It collects face images to create or expand face image databases"
+    ],
+    "q3_5": "No",
+    "q3_7": "No",
+    "q3_10": "No",
+    "related-system": "64cec68b12af4ff5aa63bcc7cad6622f",
+    "related-sytem": "64cec68b12af4ff5aa63bcc7cad6622f"
+  },
+  "record_name": "new test",
+  "related_system_id": "64cec68b12af4ff5aa63bcc7cad6622f"
+}
