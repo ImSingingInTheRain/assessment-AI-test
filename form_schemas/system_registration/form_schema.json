@@ -22,7 +22,7 @@
   "questions": [
     {
       "key": "system-type",
-      "label": "Which system type are you registering?",
+      "label": "Is your solution an AI system?",
       "type": "single",
       "options": [
         "AI system",
@@ -44,5 +44,6 @@
     "version": 1,
     "status": "published",
     "published_at": "2024-01-15T10:30:00Z"
-  }
+  },
+  "risks": []
 }
