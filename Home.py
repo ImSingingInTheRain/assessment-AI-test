@@ -238,6 +238,7 @@ def main() -> None:
         record["_aggregated_risks"] = aggregated_risks
         risk_summary = risks_to_markdown(aggregated_risks)
         record["Assigned risks"] = risk_summary or "—"
+        record["Has assigned risks"] = "Yes" if aggregated_risks else "No"
         if aggregated_risks:
             total_risk_assignments += len(aggregated_risks)
             for risk in aggregated_risks:
@@ -259,12 +260,12 @@ def main() -> None:
     metric_col3.metric("Most recent registration", most_recent or "—")
 
     st.markdown("#### Risk overview")
+    risk_metric_cols = st.columns(4)
+    risk_metric_cols[0].metric("Total assigned risks", total_risk_assignments or "0")
+    risk_metric_cols[1].metric("Unacceptable", risk_level_counts["unacceptable"] or "0")
+    risk_metric_cols[2].metric("High", risk_level_counts["high"] or "0")
+    risk_metric_cols[3].metric("Limited", risk_level_counts["limited"] or "0")
     if total_risk_assignments:
-        risk_metric_cols = st.columns(4)
-        risk_metric_cols[0].metric("Total assigned risks", total_risk_assignments)
-        risk_metric_cols[1].metric("Unacceptable", risk_level_counts["unacceptable"] or "0")
-        risk_metric_cols[2].metric("High", risk_level_counts["high"] or "0")
-        risk_metric_cols[3].metric("Limited", risk_level_counts["limited"] or "0")
         if risk_level_counts["unknown"]:
             st.caption(
                 f"Risks with unknown levels: {risk_level_counts['unknown']}"
@@ -306,6 +307,20 @@ def main() -> None:
             column: st.column_config.Column(column, disabled=True)
             for column in columns
         }
+        if "Assigned risks" in column_settings:
+            column_settings["Assigned risks"] = st.column_config.Column(
+                "Assigned risks",
+                disabled=True,
+                help="Latest risk assignments linked to this system.",
+                width="medium",
+            )
+        if "Has assigned risks" in column_settings:
+            column_settings["Has assigned risks"] = st.column_config.Column(
+                "Has assigned risks",
+                disabled=True,
+                help="Indicates whether any risks have been assigned to this system.",
+                width="small",
+            )
 
         edited_df = st.data_editor(
             table_df,
