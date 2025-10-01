@@ -1,0 +1,30 @@
+{
+  "id": "a0f93821d07446e4a504a50259e1fef9",
+  "questionnaire_key": "assessment",
+  "submitted_at": "2025-10-01T10:59:06.917304+00:00",
+  "answers": {
+    "name": "Crazy ai assessment ",
+    "q2_1": [
+      "1) Influence the decisions or behaviour of a person"
+    ],
+    "q4_2": [],
+    "q5_1": [],
+    "related-system": "d8663270a78e407da39023640b118634",
+    "org_role": "Provider / developer of the AI system",
+    "q2_2": "Yes",
+    "q2_3": [
+      "Using subliminal or manipulative techniques",
+      "Taking advantage of individuals' vulnerabilities"
+    ]
+  },
+  "record_name": "Crazy ai assessment",
+  "related_system_id": "d8663270a78e407da39023640b118634",
+  "risks": [
+    {
+      "key": "risk_prohibited",
+      "name": "Prohibited AI",
+      "level": "unacceptable",
+      "system_id": "d8663270a78e407da39023640b118634"
+    }
+  ]
+}
