@@ -5,7 +5,7 @@
     "title": "Assessment",
     "show_introduction": true,
     "introduction": {
-      "heading": "\ud83d\udc4b Welcome!",
+      "heading": "\uD83D\uDC4B Welcome!",
       "paragraphs": [
         "Please answer the questions below so we can tailor the experience to you.",
         "Questions may appear or disappear automatically depending on your responses."
@@ -22,86 +22,38 @@
   "questions": [
     {
       "key": "name",
-      "label": "assign a name to your assessment",
+      "label": "Assign a name to your assessment",
       "type": "record_name",
       "required": true
     },
     {
-      "key": "related-sytem",
+      "key": "related-system",
       "label": "Select system",
       "type": "related_record",
       "related_record_source": "system_registration"
     },
     {
-      "key": "q_area",
-      "label": "Select your area",
+      "key": "org_role",
+      "label": "What is your role in relation to this AI system?",
       "type": "single",
       "options": [
-        "Research",
-        "HR",
-        "IT"
+        "Provider / developer of the AI system",
+        "User / deployer of a third-party AI system"
       ]
     },
     {
-      "key": "q_handles_personal_data",
-      "label": "Do you handle personal data?",
-      "type": "single",
-      "options": [
-        "Yes",
-        "No"
-      ]
-    },
-    {
-      "key": "q_sensitive_categories",
-      "label": "Which sensitive categories are involved?",
+      "key": "q2_1",
+      "label": "Is the AI system able to achieve any of the following objectives?",
       "type": "multiselect",
       "options": [
-        "Health",
-        "Biometric",
-        "Financial"
-      ],
-      "show_if": {
-        "all": [
-          {
-            "field": "q_handles_personal_data",
-            "operator": "equals",
-            "value": "Yes"
-          }
-        ]
-      }
-    },
-    {
-      "key": "use-AI",
-      "label": "Is your solution using AI?",
-      "type": "single",
-      "options": [
-        "Yes",
-        "No"
+        "1) Influence the decisions or behaviour of a person",
+        "2) Provide recommendations based on behaviour or characteristics of individuals",
+        "3) Predict how individuals will behave"
       ]
     },
     {
-      "key": "high-risk",
-      "label": "Is AI used in any of the following ways?",
-      "type": "multiselect",
-      "options": [
-        "Biometric categorization",
-        "Biometric identification",
-        "Recruitment",
-        "Employee management"
-      ],
-      "show_if": {
-        "all": [
-          {
-            "field": "use-AI",
-            "operator": "equals",
-            "value": "Yes"
-          }
-        ]
-      }
-    },
-    {
-      "key": "rd-exception",
-      "label": "Is the AI developed only for R&D?",
+      "key": "q2_2",
+      "label": "Is the AI system influencing decisions or behaviours that can have a financial, psychological, or physical impact on people?",
       "type": "single",
       "options": [
         "Yes",
@@ -111,57 +63,513 @@
         "all": [
           {
             "operator": "includes",
-            "field": "q_area",
-            "value": "Research"
-          },
+            "field": "q2_1",
+            "value": "1) Influence the decisions or behaviour of a person"
+          }
+        ]
+      }
+    },
+    {
+      "key": "q2_3",
+      "label": "Is the AI System influencing decisions or behaviours in any of the following ways?",
+      "type": "multiselect",
+      "options": [
+        "Using subliminal or manipulative techniques",
+        "Taking advantage of individuals' vulnerabilities"
+      ],
+      "show_if": {
+        "all": [
           {
             "operator": "equals",
-            "field": "use-AI",
+            "field": "q2_2",
             "value": "Yes"
           }
         ]
       }
     },
     {
-      "key": "r_high_risk",
-      "label": "Your solution is high risk",
+      "key": "q2_4",
+      "label": "Does the AI system collect different kinds of information about a person’s behaviour, personality traits, or other personal characteristics?",
+      "type": "single",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "show_if": {
+        "all": [
+          {
+            "operator": "includes",
+            "field": "q2_1",
+            "value": "2) Provide recommendations based on behaviour or characteristics of individuals"
+          }
+        ]
+      }
+    },
+    {
+      "key": "q2_5",
+      "label": "Is this information combined and used in an aggregated way to evaluate or classify individuals or groups (e.g., assigning them a score)?",
+      "type": "single",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "show_if": {
+        "all": [
+          {
+            "operator": "equals",
+            "field": "q2_4",
+            "value": "Yes"
+          }
+        ]
+      }
+    },
+    {
+      "key": "q2_6",
+      "label": "Is the social score or classification generated by the AI System fitting any of these characteristics?",
+      "type": "multiselect",
+      "options": [
+        "Applied in contexts different from those for which the data was originally gathered",
+        "Used in ways not clearly or proportionally based on the data points actually collected"
+      ],
+      "show_if": {
+        "all": [
+          {
+            "operator": "equals",
+            "field": "q2_5",
+            "value": "Yes"
+          }
+        ]
+      }
+    },
+    {
+      "key": "q2_7",
+      "label": "Does your AI system assess or predict the risk of fraud, corporate espionage, or other crimes being committed?",
+      "type": "single",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "show_if": {
+        "all": [
+          {
+            "operator": "includes",
+            "field": "q2_1",
+            "value": "3) Predict how individuals will behave"
+          }
+        ]
+      }
+    },
+    {
+      "key": "q2_8",
+      "label": "Is this based on predictions of a person’s behaviour, personality traits, or other information that cannot be considered objective crime evidence?",
+      "type": "single",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "show_if": {
+        "all": [
+          {
+            "operator": "equals",
+            "field": "q2_7",
+            "value": "Yes"
+          }
+        ]
+      }
+    },
+    {
+      "key": "q3_1",
+      "label": "AI Systems interacting with biometric data must comply with legal and corporate requirements.",
+      "type": "statement"
+    },
+    {
+      "key": "q3_2",
+      "label": "Does the AI system use or create biometric data, such as facial images, fingerprints, or voiceprints?",
+      "type": "single",
+      "options": [
+        "Yes",
+        "No"
+      ]
+    },
+    {
+      "key": "q3_4",
+      "label": "Does the AI System use biometric data in any of the following ways?",
+      "type": "multiselect",
+      "options": [
+        "a) It uses biometric data to understand a person’s identity",
+        "b) It uses biometric data to understand characteristics of individuals other than their identity",
+        "c) It collects face images to create or expand face image databases"
+      ],
+      "show_if": {
+        "all": [
+          {
+            "operator": "equals",
+            "field": "q3_2",
+            "value": "Yes"
+          }
+        ]
+      }
+    },
+    {
+      "key": "q3_5",
+      "label": "Is the AI system able to detect and collect facial images from the internet, or from CCTV live feeds or recordings?",
+      "type": "single",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "show_if": {
+        "all": [
+          {
+            "operator": "includes",
+            "field": "q3_4",
+            "value": "c) It collects face images to create or expand face image databases"
+          }
+        ]
+      }
+    },
+    {
+      "key": "q3_6",
+      "label": "Is the AI System identifying individuals solely using biometric data, rather than combining it with other information to verify their identity?",
+      "type": "single",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "show_if": {
+        "all": [
+          {
+            "operator": "includes",
+            "field": "q3_4",
+            "value": "a) It uses biometric data to understand a person’s identity"
+          }
+        ]
+      }
+    },
+    {
+      "key": "q3_7",
+      "label": "Is the AI System using biometric data to understand people’s emotions?",
+      "type": "single",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "show_if": {
+        "all": [
+          {
+            "operator": "includes",
+            "field": "q3_4",
+            "value": "b) It uses biometric data to understand characteristics of individuals other than their identity"
+          }
+        ]
+      }
+    },
+    {
+      "key": "q3_8",
+      "label": "Is the AI system using biometric data to detect the emotions of employees, including contractors or consultants?",
+      "type": "single",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "show_if": {
+        "all": [
+          {
+            "operator": "equals",
+            "field": "q3_7",
+            "value": "Yes"
+          }
+        ]
+      }
+    },
+    {
+      "key": "q3_9",
+      "label": "Is biometric data used to detect emotions exclusively for health and safety reasons?",
+      "type": "single",
+      "options": [
+        "Emotion detection performed for other reasons",
+        "Emotion detection performed exclusively for health and safety reasons"
+      ],
+      "show_if": {
+        "all": [
+          {
+            "operator": "equals",
+            "field": "q3_8",
+            "value": "Yes"
+          }
+        ]
+      }
+    },
+    {
+      "key": "q3_10",
+      "label": "Are individuals categorized based on the characteristics derived from their biometric data?",
+      "type": "single",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "show_if": {
+        "all": [
+          {
+            "operator": "includes",
+            "field": "q3_4",
+            "value": "b) It uses biometric data to understand characteristics of individuals other than their identity"
+          }
+        ]
+      }
+    },
+    {
+      "key": "q3_11",
+      "label": "Is biometric data used to categorize individuals based on any of the following characteristics?",
+      "type": "multiselect",
+      "options": [
+        "(a) Race",
+        "(b) Political opinions",
+        "(c) Trade union membership",
+        "(d) Religious/philosophical beliefs",
+        "(e) Sex life or sexual orientation",
+        "(f) Ethnic origin",
+        "(g) Genetic data",
+        "(h) Health",
+        "Not Applicable"
+      ],
+      "show_if": {
+        "all": [
+          {
+            "operator": "equals",
+            "field": "q3_10",
+            "value": "Yes"
+          }
+        ]
+      }
+    },
+    {
+      "key": "q4_1",
+      "label": "Remember to answer the question in this section looking at the AI System intended purpose and reasonably foreseeable misuse.",
+      "type": "statement"
+    },
+    {
+      "key": "q4_2",
+      "label": "Please select any option applying to the AI System",
+      "type": "multiselect",
+      "options": [
+        "The AI System supports recruitment or hiring processes (e.g., targeting job ads, analyzing applications, evaluating candidates)",
+        "The AI system makes or supports decisions about employees’ work conditions, promotions, task assignments, or performance evaluations"
+      ]
+    },
+    {
+      "key": "q5_1",
+      "label": "Is your AI System integrated or interacting with any of the following products? Select all that apply.",
+      "type": "multiselect",
+      "options": [
+        "1. Medical Devices and Software as a Medical Device",
+        "2. In Vitro Diagnostic Medical Devices",
+        "3. Machinery",
+        "4. Lifts and Safety Components for Lifts",
+        "5. Equipment for Explosive Atmospheres",
+        "6. Radio Equipment",
+        "7. Pressure Equipment",
+        "8. Personal Protective Equipment",
+        "9. Appliances Burning Gaseous Fuels"
+      ]
+    },
+    {
+      "key": "q5_2",
+      "label": "Is your AI System considered as a product you selected, on its own?",
+      "type": "single",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "show_if": {
+        "all": [
+          {
+            "operator": "contains_any",
+            "field": "q5_1",
+            "value": [
+              "1. Medical Devices and Software as a Medical Device",
+              "2. In Vitro Diagnostic Medical Devices",
+              "3. Machinery",
+              "4. Lifts and Safety Components for Lifts",
+              "5. Equipment for Explosive Atmospheres",
+              "6. Radio Equipment",
+              "7. Pressure Equipment",
+              "8. Personal Protective Equipment",
+              "9. Appliances Burning Gaseous Fuels"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "key": "q5_3",
+      "label": "Is the AI System a safety component of a product you selected?",
+      "type": "single",
+      "options": [
+        "Yes",
+        "No"
+      ],
+      "show_if": {
+        "all": [
+          {
+            "operator": "equals",
+            "field": "q5_2",
+            "value": "No"
+          }
+        ]
+      }
+    },
+    {
+      "key": "s9_2",
+      "label": "Your AI System is assigned a High AI Ethics Risk Level. Before making the AI System available for use: the following obligations must be met before by August 2026. Obligations include: risk-management system, quality management, technical documentation, automatic logs, conformity assessment, EU declaration of conformity, CE mark, EU database registration, post-market monitoring, accessibility.",
       "type": "statement",
       "show_if": {
         "all": [
           {
             "any": [
               {
-                "operator": "contains_any",
-                "field": "high-risk",
-                "value": [
-                  "Biometric categorization",
-                  "Biometric identification",
-                  "Recruitment",
-                  "Employee management"
-                ]
+                "operator": "equals",
+                "field": "q3_6",
+                "value": "Yes"
+              },
+              {
+                "operator": "equals",
+                "field": "q3_7",
+                "value": "Yes"
+              },
+              {
+                "operator": "equals",
+                "field": "q3_10",
+                "value": "Yes"
               },
               {
                 "operator": "contains_any",
-                "field": "q_sensitive_categories",
+                "field": "q4_2",
                 "value": [
-                  "Biometric",
-                  "Health"
+                  "The AI System supports recruitment or hiring processes (e.g., targeting job ads, analyzing applications, evaluating candidates)",
+                  "The AI system makes or supports decisions about employees’ work conditions, promotions, task assignments, or performance evaluations"
                 ]
+              },
+              {
+                "operator": "equals",
+                "field": "q5_2",
+                "value": "Yes"
+              },
+              {
+                "operator": "equals",
+                "field": "q5_3",
+                "value": "Yes"
               }
             ]
           },
           {
+            "operator": "equals",
+            "field": "org_role",
+            "value": "Provider / developer of the AI system"
+          }
+        ]
+      }
+    },
+    {
+      "key": "s9_3",
+      "label": "Your AI System is assigned a High AI Ethics Risk Level. Before using the AI System: the following obligations must be met by August 2026. Obligations include: operate per provider instructions, appoint trained human oversight, verify input data you control, inform affected employees where applicable, transparency to individuals, align with data-protection requirements (e.g., DPIA), continuous monitoring and incident escalation, retain system logs.",
+      "type": "statement",
+      "show_if": {
+        "all": [
+          {
             "any": [
               {
-                "operator": "not_equals",
-                "field": "q_area",
-                "value": "Research"
+                "operator": "equals",
+                "field": "q3_6",
+                "value": "Yes"
               },
               {
-                "operator": "not_equals",
-                "field": "rd-exception",
+                "operator": "equals",
+                "field": "q3_7",
+                "value": "Yes"
+              },
+              {
+                "operator": "equals",
+                "field": "q3_10",
+                "value": "Yes"
+              },
+              {
+                "operator": "contains_any",
+                "field": "q4_2",
+                "value": [
+                  "The AI System supports recruitment or hiring processes (e.g., targeting job ads, analyzing applications, evaluating candidates)",
+                  "The AI system makes or supports decisions about employees’ work conditions, promotions, task assignments, or performance evaluations"
+                ]
+              },
+              {
+                "operator": "equals",
+                "field": "q5_2",
+                "value": "Yes"
+              },
+              {
+                "operator": "equals",
+                "field": "q5_3",
                 "value": "Yes"
               }
+            ]
+          },
+          {
+            "operator": "equals",
+            "field": "org_role",
+            "value": "User / deployer of a third-party AI system"
+          }
+        ]
+      }
+    },
+    {
+      "key": "s9_4",
+      "label": "Your AI System is prohibited and must be decommissioned immediately if it is currently in production.",
+      "type": "statement",
+      "show_if": {
+        "any": [
+          {
+            "operator": "contains_any",
+            "field": "q2_3",
+            "value": [
+              "Using subliminal or manipulative techniques",
+              "Taking advantage of individuals' vulnerabilities"
+            ]
+          },
+          {
+            "operator": "contains_any",
+            "field": "q2_6",
+            "value": [
+              "Applied in contexts different from those for which the data was originally gathered",
+              "Used in ways not clearly or proportionally based on the data points actually collected"
+            ]
+          },
+          {
+            "operator": "equals",
+            "field": "q2_8",
+            "value": "Yes"
+          },
+          {
+            "operator": "equals",
+            "field": "q3_5",
+            "value": "Yes"
+          },
+          {
+            "operator": "equals",
+            "field": "q3_9",
+            "value": "Emotion detection performed for other reasons"
+          },
+          {
+            "operator": "contains_any",
+            "field": "q3_11",
+            "value": [
+              "(a) Race",
+              "(b) Political opinions",
+              "(c) Trade union membership",
+              "(d) Religious/philosophical beliefs",
+              "(e) Sex life or sexual orientation",
+              "(f) Ethnic origin",
+              "(g) Genetic data",
+              "(h) Health"
             ]
           }
         ]
@@ -169,25 +577,125 @@
     }
   ],
   "meta": {
-    "version": 1,
-    "status": "published",
-    "published_at": "2024-01-15T10:30:00Z"
+    "version": 2,
+    "status": "draft",
+    "published_at": "2025-10-01T10:30:00Z"
   },
   "risks": [
     {
-      "key": "risk1",
+      "key": "risk_prohibited",
+      "name": "Prohibited AI",
+      "level": "unacceptable",
+      "logic": {
+        "any": [
+          {
+            "operator": "contains_any",
+            "field": "q2_3",
+            "value": [
+              "Using subliminal or manipulative techniques",
+              "Taking advantage of individuals' vulnerabilities"
+            ]
+          },
+          {
+            "operator": "contains_any",
+            "field": "q2_6",
+            "value": [
+              "Applied in contexts different from those for which the data was originally gathered",
+              "Used in ways not clearly or proportionally based on the data points actually collected"
+            ]
+          },
+          {
+            "operator": "equals",
+            "field": "q2_8",
+            "value": "Yes"
+          },
+          {
+            "operator": "equals",
+            "field": "q3_5",
+            "value": "Yes"
+          },
+          {
+            "operator": "equals",
+            "field": "q3_9",
+            "value": "Emotion detection performed for other reasons"
+          },
+          {
+            "operator": "contains_any",
+            "field": "q3_11",
+            "value": [
+              "(a) Race",
+              "(b) Political opinions",
+              "(c) Trade union membership",
+              "(d) Religious/philosophical beliefs",
+              "(e) Sex life or sexual orientation",
+              "(f) Ethnic origin",
+              "(g) Genetic data",
+              "(h) Health"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "key": "risk_high",
       "name": "High Risk AI",
       "level": "high",
       "logic": {
         "all": [
           {
-            "operator": "contains_any",
-            "field": "high-risk",
-            "value": [
-              "Biometric categorization",
-              "Biometric identification",
-              "Recruitment",
-              "Employee management"
+            "any": [
+              {
+                "operator": "equals",
+                "field": "q3_6",
+                "value": "Yes"
+              },
+              {
+                "operator": "equals",
+                "field": "q3_7",
+                "value": "Yes"
+              },
+              {
+                "operator": "equals",
+                "field": "q3_10",
+                "value": "Yes"
+              },
+              {
+                "operator": "contains_any",
+                "field": "q4_2",
+                "value": [
+                  "The AI System supports recruitment or hiring processes (e.g., targeting job ads, analyzing applications, evaluating candidates)",
+                  "The AI system makes or supports decisions about employees’ work conditions, promotions, task assignments, or performance evaluations"
+                ]
+              },
+              {
+                "operator": "equals",
+                "field": "q5_2",
+                "value": "Yes"
+              },
+              {
+                "operator": "equals",
+                "field": "q5_3",
+                "value": "Yes"
+              }
+            ]
+          },
+          {
+            "all": [
+              {
+                "operator": "not_equals",
+                "field": "q2_8",
+                "value": "Yes"
+              },
+              {
+                "operator": "not_equals",
+                "field": "q3_5",
+                "value": "Yes"
+              },
+              {
+                "operator": "not_equals",
+                "field": "q3_9",
+                "value": "Emotion detection performed for other reasons"
+              }
             ]
           }
         ]
