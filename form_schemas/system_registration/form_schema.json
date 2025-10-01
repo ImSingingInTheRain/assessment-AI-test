@@ -21,6 +21,11 @@
   },
   "questions": [
     {
+      "key": "name-system",
+      "label": "Assign a name to your system",
+      "type": "record_name"
+    },
+    {
       "key": "system-type",
       "label": "Is your solution an AI system?",
       "type": "single",
@@ -33,11 +38,6 @@
       "key": "description",
       "label": "Provide a description of the system",
       "type": "text"
-    },
-    {
-      "key": "name-system",
-      "label": "assign a name to your system",
-      "type": "record_name"
     }
   ],
   "meta": {
